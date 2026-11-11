@@ -156,7 +156,8 @@ export function createApiApp(apiToken: string): express.Express {
           (change.action !== "write" && change.action !== "delete" && change.action !== "move") ||
           (change.action === "move" && (typeof change.destinationPath !== "string" || change.destinationPath.length > 4096)) ||
           (change.expectedHash !== null && typeof change.expectedHash !== "string") ||
-          (change.content !== undefined && typeof change.content !== "string")) {
+          (change.content !== undefined && typeof change.content !== "string") ||
+          (change.patches !== undefined && !Array.isArray(change.patches))) {
         response.status(400).json({ error: "Invalid file change" });
         return;
       }
@@ -165,7 +166,8 @@ export function createApiApp(apiToken: string): express.Express {
         action: change.action,
         expectedHash: change.expectedHash as string | null,
         ...(typeof change.destinationPath === "string" ? { destinationPath: change.destinationPath } : {}),
-        ...(typeof change.content === "string" ? { content: change.content } : {})
+        ...(typeof change.content === "string" ? { content: change.content } : {}),
+        ...(Array.isArray(change.patches) ? { patches: change.patches as EditChangeInput["patches"] } : {})
       });
     }
     try {
