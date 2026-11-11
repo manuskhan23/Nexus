@@ -333,8 +333,9 @@ export async function applyEditProposal(projectId: string, id: string): Promise<
       applied.push(change);
     }
 
-    await projectStore.finishEditProposal(projectId, id, "applied", new Date().toISOString());
-    return { status: "applied", snapshotIds: Array.from(snapshotIds.values()) };
+    const recoveryIds = Array.from(snapshotIds.values());
+    await projectStore.finishEditProposal(projectId, id, "applied", new Date().toISOString(), undefined, recoveryIds);
+    return { status: "applied", snapshotIds: recoveryIds };
   } catch (error) {
     const rollbackFailures: string[] = [];
     for (const change of [...applied].reverse()) {
