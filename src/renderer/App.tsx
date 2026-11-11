@@ -59,6 +59,37 @@ interface SnapshotDiff {
   removed: string[];
   truncated: boolean;
 }
+interface EditableFile {
+  path: string;
+  exists: boolean;
+  hash: string | null;
+  content: string;
+  size: number;
+}
+interface EditChange {
+  path: string;
+  action: "write" | "delete";
+  expectedHash: string | null;
+  size: number;
+  currentHash: string | null;
+  conflict: boolean;
+  diff: string[];
+  diffTruncated: boolean;
+}
+interface EditProposal {
+  id: string;
+  projectId: string;
+  title: string;
+  status: "pending" | "applying" | "applied" | "rejected" | "failed";
+  createdAt: string;
+  completedAt?: string;
+  snapshotIds?: string[];
+  failureMessage?: string;
+  changes: EditChange[];
+}
+interface EditProposalList {
+  proposals: Array<Omit<EditProposal, "changes"> & { changes: Array<{ path: string; action: "write" | "delete"; expectedHash: string | null; size: number }> }>;
+}
 
 export function App() {
   const [projects, setProjects] = useState<Project[]>([]);
@@ -68,6 +99,11 @@ export function App() {
   const [results, setResults] = useState<Record<string, ContextResult>>({});
   const [snapshots, setSnapshots] = useState<Record<string, Snapshot[]>>({});
   const [diffs, setDiffs] = useState<Record<string, SnapshotDiff>>({});
+  const [editPath, setEditPath] = useState("");
+  const [editTitle, setEditTitle] = useState("");
+  const [drafts, setDrafts] = useState<Record<string, EditableFile>>({});
+  const [editProposals, setEditProposals] = useState<Record<string, EditProposalList["proposals"]>>({});
+  const [selectedEdits, setSelectedEdits] = useState<Record<string, EditProposal>>({});
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
 
@@ -164,6 +200,82 @@ export function App() {
     });
   }
 
+  function loadEditFile(project: Project) {
+    return run(async () => {
+      const filePath = editPath.trim();
+      if (!filePath) throw new Error("Enter a project-relative path to inspect");
+      const file = await window.nexus.files.read(project.id, filePath) as EditableFile;
+      setDrafts((current) => ({ ...current, [project.id]: file }));
+      setNotice(file.exists ? `Loaded ${file.path} at hash ${file.hash?.slice(0, 12)}.` : `${file.path} will be created when the proposal is applied.`);
+    });
+  }
+
+  function stageEdit(project: Project, action: "write" | "delete") {
+    return run(async () => {
+      const draft = drafts[project.id];
+      if (!draft) throw new Error("Inspect the file before staging a change");
+      if (action === "delete" && !draft.exists) throw new Error("The file does not exist");
+      const result = await window.nexus.edits.propose(project.id, editTitle.trim() || `Edit ${draft.path}`, [{
+        path: draft.path,
+        action,
+        expectedHash: draft.hash,
+        ...(action === "write" ? { content: draft.content } : {})
+      }]) as EditProposal;
+      const list = await window.nexus.edits.list(project.id) as EditProposalList;
+      setEditProposals((current) => ({ ...current, [project.id]: list.proposals }));
+      setSelectedEdits((current) => ({ ...current, [project.id]: result }));
+      setNotice(`Prepared ${action} proposal for ${draft.path}. Review its diff before applying.`);
+    });
+  }
+
+  function loadEditProposals(project: Project) {
+    return run(async () => {
+      const list = await window.nexus.edits.list(project.id) as EditProposalList;
+      setEditProposals((current) => ({ ...current, [project.id]: list.proposals }));
+    });
+  }
+
+  function inspectEditProposal(project: Project, proposalId: string) {
+    return run(async () => {
+      const proposal = await window.nexus.edits.get(project.id, proposalId) as EditProposal;
+      setSelectedEdits((current) => ({ ...current, [project.id]: proposal }));
+    });
+  }
+
+  function applyEditProposal(project: Project, proposal: EditProposal) {
+    return run(async () => {
+      if (proposal.changes.some((change) => change.conflict)) {
+        throw new Error("A file changed after this proposal was prepared. Reject it and prepare a new proposal.");
+      }
+      const accepted = window.confirm(`Apply “${proposal.title}” to ${proposal.changes.length} file(s)? A recovery snapshot will be saved first.`);
+      if (!accepted) return;
+      await window.nexus.edits.apply(project.id, proposal.id);
+      const [list, updated] = await Promise.all([
+        window.nexus.edits.list(project.id) as Promise<EditProposalList>,
+        window.nexus.edits.get(project.id, proposal.id) as Promise<EditProposal>
+      ]);
+      setEditProposals((current) => ({ ...current, [project.id]: list.proposals }));
+      setSelectedEdits((current) => ({ ...current, [project.id]: updated }));
+      const draft = drafts[project.id];
+      if (draft) {
+        const refreshed = await window.nexus.files.read(project.id, draft.path) as EditableFile;
+        setDrafts((current) => ({ ...current, [project.id]: refreshed }));
+      }
+      setNotice("Proposal applied and recovery snapshots recorded.");
+    });
+  }
+
+  function rejectEditProposal(project: Project, proposal: EditProposal) {
+    return run(async () => {
+      await window.nexus.edits.reject(project.id, proposal.id);
+      const list = await window.nexus.edits.list(project.id) as EditProposalList;
+      setEditProposals((current) => ({ ...current, [project.id]: list.proposals }));
+      const updated = await window.nexus.edits.get(project.id, proposal.id) as EditProposal;
+      setSelectedEdits((current) => ({ ...current, [project.id]: updated }));
+      setNotice("Edit proposal rejected.");
+    });
+  }
+
   function removeProject(project: Project) {
     return run(async () => {
       await window.nexus.projects.remove(project.id);
@@ -228,6 +340,71 @@ export function App() {
                 <button className="secondary-button" onClick={() => void rescan(project)} disabled={busy}>Rescan</button>
                 <button className="text-button" onClick={() => void removeProject(project)} disabled={busy}>Remove</button>
               </div>
+
+              <section className="edit-panel">
+                <h3>Reviewable code edits</h3>
+                <p className="muted small">Inspect a project file, stage a change, review the diff, then approve or reject it. Project files stay local.</p>
+                <div className="search-row">
+                  <input value={editPath} onChange={(event) => setEditPath(event.target.value)}
+                    maxLength={4096} placeholder="src/components/App.tsx" aria-label="File to edit" />
+                  <button className="secondary-button" onClick={() => void loadEditFile(project)} disabled={busy}>Inspect</button>
+                </div>
+                {drafts[project.id] && (
+                  <div className="edit-draft">
+                    <p className="muted small">
+                      {drafts[project.id].exists ? `Current hash ${drafts[project.id].hash}` : "New file"}
+                    </p>
+                    <input value={editTitle} onChange={(event) => setEditTitle(event.target.value)}
+                      maxLength={160} placeholder="Change title" aria-label="Change title" />
+                    <textarea value={drafts[project.id].content}
+                      onChange={(event) => setDrafts((current) => ({
+                        ...current,
+                        [project.id]: { ...current[project.id], content: event.target.value }
+                      }))}
+                      maxLength={1_000_000} spellCheck={false} aria-label="Proposed file content" />
+                    <div className="actions">
+                      <button className="secondary-button" onClick={() => void stageEdit(project, "write")} disabled={busy}>Review change</button>
+                      {drafts[project.id].exists &&
+                        <button className="text-button" onClick={() => void stageEdit(project, "delete")} disabled={busy}>Propose delete</button>}
+                      <button className="text-button" onClick={() => void loadEditProposals(project)} disabled={busy}>Edit history</button>
+                    </div>
+                  </div>
+                )}
+                {(editProposals[project.id] ?? []).length > 0 && (
+                  <div className="edit-history">
+                    {(editProposals[project.id] ?? []).map((proposal) => (
+                      <button className="edit-history-item" key={proposal.id}
+                        onClick={() => void inspectEditProposal(project, proposal.id)} disabled={busy}>
+                        {proposal.title} · {proposal.status} · {proposal.changes.length} file(s)
+                      </button>
+                    ))}
+                  </div>
+                )}
+                {selectedEdits[project.id] && (
+                  <div className="edit-review">
+                    <div className="project-heading">
+                      <strong>{selectedEdits[project.id].title}</strong>
+                      <span className="index-badge">{selectedEdits[project.id].status.toUpperCase()}</span>
+                    </div>
+                    {selectedEdits[project.id].changes.map((change) => (
+                      <section className="source-result" key={change.path}>
+                        <div className="source-heading"><strong>{change.path} · {change.action}</strong>
+                          <span>{change.conflict ? "CONFLICT" : "READY"}</span></div>
+                        <pre className="diff-view">{change.diff.join("\n")}{change.diffTruncated ? "\n… diff is bounded" : ""}</pre>
+                      </section>
+                    ))}
+                    {selectedEdits[project.id].status === "pending" && (
+                      <div className="actions">
+                        <button className="primary-button" onClick={() => void applyEditProposal(project, selectedEdits[project.id])}
+                          disabled={busy || selectedEdits[project.id].changes.some((change) => change.conflict)}>Apply approved change</button>
+                        <button className="text-button" onClick={() => void rejectEditProposal(project, selectedEdits[project.id])} disabled={busy}>Reject</button>
+                      </div>
+                    )}
+                    {selectedEdits[project.id].failureMessage &&
+                      <p className="message error">{selectedEdits[project.id].failureMessage}</p>}
+                  </div>
+                )}
+              </section>
 
               <form className="context-search" onSubmit={(event) => { event.preventDefault(); void search(project); }}>
                 <label htmlFor={`query-${project.id}`}>Find relevant code</label>
@@ -295,7 +472,7 @@ export function App() {
         })}
       </section>
 
-      <footer>PHASE 4 · VERSION HISTORY · RESTORE CHECKS FILE HASHES</footer>
+      <footer>PHASE 3 · REVIEWABLE EDITS · SNAPSHOT BEFORE APPLY</footer>
     </main>
   );
 }
