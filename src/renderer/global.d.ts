@@ -32,6 +32,11 @@ declare global {
         getProcess(projectId: string, processId: string): Promise<unknown>;
         cancel(projectId: string, processId: string, approvalGranted: boolean): Promise<unknown>;
       };
+      settings: {
+        listProviders(): Promise<unknown>;
+        saveProviderCredential(provider: "gemini" | "groq", credential: string | null): Promise<unknown>;
+        testProvider(provider: "gemini" | "groq", model: string): Promise<unknown>;
+      };
       browser: {
         start(projectId: string, approvalGranted: boolean): Promise<unknown>;
         navigate(projectId: string, sessionId: string, url: string, approvalGranted: boolean): Promise<unknown>;
