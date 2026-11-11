@@ -110,7 +110,7 @@ export class ToolRegistry {
         status: "failed",
         at: new Date().toISOString(),
         durationMs: Date.now() - started,
-        error: message.replace(/(?:password|secret|api[_-]?key|token)\s*[:=]\s*[^\s,;]+/gi, "$1[redacted]").slice(0, 500)
+        error: message.replace(/((?:password|secret|api[_-]?key|token)\s*[:=]\s*)[^\s,;]+/gi, "$1[redacted]").slice(0, 500)
       });
       throw error;
     } finally {
