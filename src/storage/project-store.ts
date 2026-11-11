@@ -22,11 +22,97 @@ export interface FileSnapshot {
   blobKey: string;
 }
 
+export interface MemoryRecord {
+  id: string;
+  projectId: string | null;
+  title: string;
+  content: string;
+  enabled: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ToolExecutionRecord {
+  id: string;
+  toolId: string;
+  projectId: string;
+  status: "started" | "completed" | "failed";
+  at: string;
+  durationMs?: number;
+  error?: string;
+}
+
+export type TaskStatus = "pending" | "planning" | "awaiting_approval" | "running" | "paused" | "failed" | "completed" | "cancelled";
+export type TaskStepStatus = "pending" | "running" | "completed" | "failed" | "skipped";
+
+export interface TaskStepRecord {
+  id: string;
+  title: string;
+  description: string;
+  dependencies: string[];
+  status: TaskStepStatus;
+  startedAt?: string;
+  completedAt?: string;
+  result?: string;
+}
+
+export interface TaskEventRecord {
+  id: string;
+  at: string;
+  type: string;
+  message: string;
+  stepId?: string;
+}
+
+export interface TaskRecord {
+  id: string;
+  projectId: string;
+  title: string;
+  description: string;
+  priority: "low" | "normal" | "high";
+  status: TaskStatus;
+  steps: TaskStepRecord[];
+  currentStepId: string | null;
+  progress: number;
+  createdAt: string;
+  updatedAt: string;
+  startedAt?: string;
+  completedAt?: string;
+  error?: string;
+  events: TaskEventRecord[];
+}
+
+export interface EditProposalChange {
+  path: string;
+  action: "write" | "delete" | "move";
+  expectedHash: string | null;
+  destinationPath?: string;
+  contentBlobKey?: string;
+  contentHash?: string;
+  size: number;
+}
+
+export interface EditProposal {
+  id: string;
+  projectId: string;
+  title: string;
+  status: "pending" | "applying" | "applied" | "rejected" | "failed";
+  changes: EditProposalChange[];
+  createdAt: string;
+  completedAt?: string;
+  snapshotIds?: string[];
+  failureMessage?: string;
+}
+
 interface StoredProject extends ProjectRecord {}
 interface StoredFile extends IndexedFile {
   projectId: string;
 }
 interface StoredSnapshot extends FileSnapshot {}
+interface StoredEditProposal extends EditProposal {}
+interface StoredTask extends TaskRecord {}
+interface StoredToolExecution extends ToolExecutionRecord {}
+interface StoredMemory extends MemoryRecord {}
 
 let client: MongoClient | undefined;
 let database: Db | undefined;
@@ -47,7 +133,15 @@ async function connect(): Promise<void> {
         database.collection<StoredFile>("project_files").createIndex({ projectId: 1, path: 1 }, { unique: true }),
         database.collection<StoredFile>("project_files").createIndex({ projectId: 1, language: 1 }),
         database.collection<StoredSnapshot>("file_snapshots").createIndex({ id: 1 }, { unique: true }),
-        database.collection<StoredSnapshot>("file_snapshots").createIndex({ projectId: 1, path: 1, createdAt: -1 })
+        database.collection<StoredSnapshot>("file_snapshots").createIndex({ projectId: 1, path: 1, createdAt: -1 }),
+        database.collection<StoredEditProposal>("edit_proposals").createIndex({ id: 1 }, { unique: true }),
+        database.collection<StoredEditProposal>("edit_proposals").createIndex({ projectId: 1, createdAt: -1 }),
+        database.collection<StoredTask>("tasks").createIndex({ id: 1 }, { unique: true }),
+        database.collection<StoredTask>("tasks").createIndex({ projectId: 1, updatedAt: -1 }),
+        database.collection<StoredMemory>("memories").createIndex({ id: 1 }, { unique: true }),
+        database.collection<StoredMemory>("memories").createIndex({ projectId: 1, enabled: 1, updatedAt: -1 }),
+        database.collection<StoredToolExecution>("tool_executions").createIndex({ id: 1, status: 1 }),
+        database.collection<StoredToolExecution>("tool_executions").createIndex({ projectId: 1, at: -1 })
       ]);
     })();
   }
@@ -66,12 +160,20 @@ async function collections(): Promise<{
   projects: Collection<StoredProject>;
   files: Collection<StoredFile>;
   snapshots: Collection<StoredSnapshot>;
+  editProposals: Collection<StoredEditProposal>;
+  tasks: Collection<StoredTask>;
+  toolExecutions: Collection<StoredToolExecution>;
+  memories: Collection<StoredMemory>;
 }> {
   await connect();
   return {
     projects: database!.collection<StoredProject>("projects"),
     files: database!.collection<StoredFile>("project_files"),
-    snapshots: database!.collection<StoredSnapshot>("file_snapshots")
+    snapshots: database!.collection<StoredSnapshot>("file_snapshots"),
+    editProposals: database!.collection<StoredEditProposal>("edit_proposals"),
+    tasks: database!.collection<StoredTask>("tasks"),
+    toolExecutions: database!.collection<StoredToolExecution>("tool_executions"),
+    memories: database!.collection<StoredMemory>("memories")
   };
 }
 
@@ -142,6 +244,97 @@ export const projectStore = {
     const { snapshots } = await collections();
     const filter = relativePath ? { projectId, path: relativePath } : { projectId };
     return snapshots.find(filter, { projection: { _id: 0 } }).sort({ createdAt: -1 }).limit(100).toArray();
+  },
+  async createEditProposal(proposal: EditProposal): Promise<void> {
+    const { editProposals } = await collections();
+    await editProposals.insertOne(proposal);
+  },
+  async getEditProposal(projectId: string, id: string): Promise<EditProposal | undefined> {
+    const { editProposals } = await collections();
+    return (await editProposals.findOne({ projectId, id }, { projection: { _id: 0 } })) ?? undefined;
+  },
+  async listEditProposals(projectId: string): Promise<EditProposal[]> {
+    const { editProposals } = await collections();
+    return editProposals.find({ projectId }, { projection: { _id: 0 } })
+      .sort({ createdAt: -1 }).limit(50).toArray();
+  },
+  async claimEditProposal(projectId: string, id: string): Promise<boolean> {
+    const { editProposals } = await collections();
+    const result = await editProposals.updateOne(
+      { projectId, id, status: "pending" },
+      { $set: { status: "applying" } }
+    );
+    return result.modifiedCount === 1;
+  },
+  async finishEditProposal(
+    projectId: string,
+    id: string,
+    status: "applied" | "rejected" | "failed",
+    completedAt: string,
+    failureMessage?: string,
+    snapshotIds?: string[]
+  ): Promise<void> {
+    const { editProposals } = await collections();
+    const set = {
+      status,
+      completedAt,
+      ...(failureMessage ? { failureMessage: failureMessage.slice(0, 500) } : {}),
+      ...(snapshotIds ? { snapshotIds } : {})
+    };
+    if (failureMessage) {
+      await editProposals.updateOne({ projectId, id }, { $set: set });
+    } else {
+      await editProposals.updateOne({ projectId, id }, { $set: set, $unset: { failureMessage: "" as const } });
+    }
+  },
+  async addTask(task: TaskRecord): Promise<void> {
+    const { tasks } = await collections();
+    await tasks.insertOne(task);
+  },
+  async getTask(projectId: string, id: string): Promise<TaskRecord | undefined> {
+    const { tasks } = await collections();
+    return (await tasks.findOne({ projectId, id }, { projection: { _id: 0 } })) ?? undefined;
+  },
+  async listTasks(projectId: string): Promise<TaskRecord[]> {
+    const { tasks } = await collections();
+    return tasks.find({ projectId }, { projection: { _id: 0 } }).sort({ updatedAt: -1 }).limit(100).toArray();
+  },
+  async saveTask(task: TaskRecord, expectedUpdatedAt: string): Promise<boolean> {
+    const { tasks } = await collections();
+    const result = await tasks.replaceOne({ projectId: task.projectId, id: task.id, updatedAt: expectedUpdatedAt }, task);
+    return result.modifiedCount === 1;
+  },
+  async addMemory(memory: MemoryRecord): Promise<void> {
+    const { memories } = await collections();
+    await memories.insertOne(memory);
+  },
+  async listMemories(projectId: string | null): Promise<MemoryRecord[]> {
+    const { memories } = await collections();
+    const filter = projectId === null ? { projectId: null } : { $or: [{ projectId: null }, { projectId }] };
+    return memories.find(filter, { projection: { _id: 0 } }).sort({ updatedAt: -1 }).limit(200).toArray();
+  },
+  async getMemory(id: string): Promise<MemoryRecord | undefined> {
+    const { memories } = await collections();
+    return (await memories.findOne({ id }, { projection: { _id: 0 } })) ?? undefined;
+  },
+  async saveMemory(memory: MemoryRecord, expectedUpdatedAt: string): Promise<boolean> {
+    const { memories } = await collections();
+    const result = await memories.replaceOne({ id: memory.id, updatedAt: expectedUpdatedAt }, memory);
+    return result.modifiedCount === 1;
+  },
+  async removeMemory(id: string): Promise<boolean> {
+    const { memories } = await collections();
+    const result = await memories.deleteOne({ id });
+    return result.deletedCount === 1;
+  },
+  async addToolExecution(event: ToolExecutionRecord): Promise<void> {
+    const { toolExecutions } = await collections();
+    await toolExecutions.insertOne(event);
+  },
+  async listToolExecutions(projectId: string, limit = 100): Promise<ToolExecutionRecord[]> {
+    const { toolExecutions } = await collections();
+    return toolExecutions.find({ projectId }, { projection: { _id: 0 } })
+      .sort({ at: -1 }).limit(Math.max(1, Math.min(limit, 500))).toArray();
   },
   async close(): Promise<void> {
     await client?.close();

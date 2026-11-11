@@ -1,5 +1,7 @@
 import { randomBytes } from "node:crypto";
-import { app, BrowserWindow, dialog, ipcMain, type IpcMainInvokeEvent } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, safeStorage, type IpcMainInvokeEvent } from "electron";
+import { readFile, writeFile, rename, mkdir } from "node:fs/promises";
+import { setProviderCredential, getProviderStatuses, generateText, type AIProviderId } from "../ai/provider-service.js";
 import path from "node:path";
 import { startApiServer, type RunningApi } from "../server/runtime.js";
 
@@ -34,7 +36,85 @@ async function apiRequest<T>(route: string, init?: RequestInit): Promise<T> {
   return await response.json() as T;
 }
 
+function hasSecureProviderStorage(): boolean {
+  return safeStorage.isEncryptionAvailable() && safeStorage.getSelectedStorageBackend() !== "basic_text";
+}
+
+function requireSecureProviderStorage(): void {
+  if (!hasSecureProviderStorage()) {
+    throw new Error("OS-backed credential encryption is unavailable; provider keys were not stored");
+  }
+}
+
+async function loadProviderCredentials(): Promise<void> {
+  const file = path.join(app.getPath("userData"), "provider-credentials.json");
+  let encoded: Record<string, string>;
+  try {
+    encoded = JSON.parse(await readFile(file, "utf8")) as Record<string, string>;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+    throw new Error("Stored provider credentials could not be read");
+  }
+  requireSecureProviderStorage();
+  for (const provider of ["gemini", "groq"] as const) {
+    const value = encoded[provider];
+    if (typeof value !== "string") continue;
+    try {
+      setProviderCredential(provider, safeStorage.decryptString(Buffer.from(value, "base64")));
+    } catch {
+      throw new Error(`Stored ${provider} credential could not be decrypted on this account`);
+    }
+  }
+}
+
+async function saveProviderCredential(provider: AIProviderId, credential: string | null): Promise<void> {
+  if (!safeStorage.isEncryptionAvailable()) throw new Error("OS-backed credential encryption is unavailable");
+  const file = path.join(app.getPath("userData"), "provider-credentials.json");
+  const encoded: Record<string, string> = {};
+  try {
+    Object.assign(encoded, JSON.parse(await readFile(file, "utf8")) as Record<string, string>);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw new Error("Stored provider credentials could not be read");
+  }
+  if (credential === null) delete encoded[provider];
+  else encoded[provider] = safeStorage.encryptString(credential).toString("base64");
+  await mkdir(path.dirname(file), { recursive: true });
+  const temporary = `${file}.${randomBytes(8).toString("hex")}.tmp`;
+  try {
+    await writeFile(temporary, JSON.stringify(encoded), { encoding: "utf8", mode: 0o600, flag: "wx" });
+    await rename(temporary, file);
+  } catch (error) {
+    await import("node:fs/promises").then(({ unlink }) => unlink(temporary).catch(() => undefined));
+    throw error;
+  }
+  setProviderCredential(provider, credential);
+}
+
 function registerIpc(): void {
+  ipcMain.handle("settings:providers", async (event) => {
+    assertTrustedRenderer(event);
+    return { providers: getProviderStatuses(), encryptionAvailable: hasSecureProviderStorage() };
+  });
+
+  ipcMain.handle("settings:provider-test", async (event, provider: unknown, model: unknown) => {
+    assertTrustedRenderer(event);
+    if ((provider !== "gemini" && provider !== "groq") || typeof model !== "string" || model.length > 120) {
+      throw new Error("Invalid provider test request");
+    }
+    const result = await generateText(provider, model, "Reply briefly.", "Reply with the single word READY.");
+    return { provider: result.provider, model: result.model, text: result.text.slice(0, 200) };
+  });
+
+  ipcMain.handle("settings:provider-credential", async (event, provider: unknown, credential: unknown) => {
+    assertTrustedRenderer(event);
+    if ((provider !== "gemini" && provider !== "groq") ||
+        (credential !== null && (typeof credential !== "string" || credential.length > 4096))) {
+      throw new Error("Invalid provider credential");
+    }
+    await saveProviderCredential(provider, credential as string | null);
+    return { providers: getProviderStatuses() };
+  });
+
   ipcMain.handle("projects:choose", async (event) => {
     assertTrustedRenderer(event);
     const result = await dialog.showOpenDialog(windowRef!, {
@@ -67,6 +147,278 @@ function registerIpc(): void {
       method: "POST",
       body: JSON.stringify({ query })
     });
+  });
+
+  ipcMain.handle("terminal:run", async (event, id: unknown, input: unknown, approvalGranted: unknown) => {
+    assertTrustedRenderer(event);
+    if (typeof id !== "string" || id.length > 64 || !input || typeof input !== "object" || approvalGranted !== true) {
+      throw new Error("Explicit approval and a valid terminal command are required");
+    }
+    const value = input as Record<string, unknown>;
+    if (typeof value.command !== "string" || value.command.length > 16_000 ||
+        (value.shell !== "powershell" && value.shell !== "cmd") ||
+        (value.cwd !== undefined && typeof value.cwd !== "string") ||
+        (value.timeoutMs !== undefined && typeof value.timeoutMs !== "number")) {
+      throw new Error("Invalid terminal command");
+    }
+    return apiRequest(`/api/projects/${encodeURIComponent(id)}/terminal/commands`, {
+      method: "POST", body: JSON.stringify({ ...value, approved: true })
+    });
+  });
+
+  ipcMain.handle("terminal:processes", async (event, id: unknown) => {
+    assertTrustedRenderer(event);
+    if (typeof id !== "string" || id.length > 64) throw new Error("Invalid project identifier");
+    return apiRequest(`/api/projects/${encodeURIComponent(id)}/terminal/processes`);
+  });
+
+  ipcMain.handle("terminal:get", async (event, id: unknown, processId: unknown) => {
+    assertTrustedRenderer(event);
+    if (typeof id !== "string" || id.length > 64 || typeof processId !== "string" || processId.length > 64) {
+      throw new Error("Invalid process reference");
+    }
+    return apiRequest(`/api/projects/${encodeURIComponent(id)}/terminal/processes/${encodeURIComponent(processId)}`);
+  });
+
+  ipcMain.handle("terminal:cancel", async (event, id: unknown, processId: unknown, approvalGranted: unknown) => {
+    assertTrustedRenderer(event);
+    if (typeof id !== "string" || id.length > 64 || typeof processId !== "string" || processId.length > 64 ||
+        approvalGranted !== true) throw new Error("Explicit approval is required to stop the process");
+    return apiRequest(`/api/projects/${encodeURIComponent(id)}/terminal/processes/${encodeURIComponent(processId)}/cancel`, {
+      method: "POST", body: JSON.stringify({ approved: true })
+    });
+  });
+
+  ipcMain.handle("memories:list", async (event, id: unknown) => {
+    assertTrustedRenderer(event);
+    if (typeof id !== "string" || id.length > 64) throw new Error("Invalid project identifier");
+    return apiRequest(`/api/projects/${encodeURIComponent(id)}/memories`);
+  });
+
+  ipcMain.handle("memories:create", async (event, id: unknown, scope: unknown, title: unknown, content: unknown) => {
+    assertTrustedRenderer(event);
+    if (typeof id !== "string" || id.length > 64 || (scope !== "user" && scope !== "project") ||
+        typeof title !== "string" || title.length > 120 || typeof content !== "string" || content.length > 4000) {
+      throw new Error("Invalid memory details");
+    }
+    return apiRequest(`/api/projects/${encodeURIComponent(id)}/memories`, {
+      method: "POST", body: JSON.stringify({ scope, title, content })
+    });
+  });
+
+  ipcMain.handle("memories:update", async (event, id: unknown, memoryId: unknown, input: unknown) => {
+    assertTrustedRenderer(event);
+    if (typeof id !== "string" || id.length > 64 || typeof memoryId !== "string" || memoryId.length > 64 ||
+        !input || typeof input !== "object") throw new Error("Invalid memory update");
+    const value = input as Record<string, unknown>;
+    if ((value.title !== undefined && (typeof value.title !== "string" || value.title.length > 120)) ||
+        (value.content !== undefined && (typeof value.content !== "string" || value.content.length > 4000)) ||
+        (value.enabled !== undefined && typeof value.enabled !== "boolean")) throw new Error("Invalid memory update");
+    return apiRequest(`/api/projects/${encodeURIComponent(id)}/memories/${encodeURIComponent(memoryId)}`, {
+      method: "PUT", body: JSON.stringify(value)
+    });
+  });
+
+  ipcMain.handle("memories:remove", async (event, id: unknown, memoryId: unknown) => {
+    assertTrustedRenderer(event);
+    if (typeof id !== "string" || id.length > 64 || typeof memoryId !== "string" || memoryId.length > 64) {
+      throw new Error("Invalid memory reference");
+    }
+    return apiRequest(`/api/projects/${encodeURIComponent(id)}/memories/${encodeURIComponent(memoryId)}`, { method: "DELETE" });
+  });
+
+  ipcMain.handle("memories:export", async (event, id: unknown) => {
+    assertTrustedRenderer(event);
+    if (typeof id !== "string" || id.length > 64) throw new Error("Invalid project identifier");
+    const data = await apiRequest(`/api/projects/${encodeURIComponent(id)}/memories/export`);
+    const result = await dialog.showSaveDialog(windowRef!, {
+      title: "Export NEXUS memories",
+      defaultPath: "nexus-memories.json",
+      filters: [{ name: "JSON", extensions: ["json"] }]
+    });
+    if (result.canceled || !result.filePath) return false;
+    await writeFile(result.filePath, JSON.stringify(data, null, 2), { encoding: "utf8", flag: "wx" })
+      .catch(async (error: NodeJS.ErrnoException) => {
+        if (error.code !== "EEXIST") throw error;
+        await writeFile(result.filePath, JSON.stringify(data, null, 2), { encoding: "utf8" });
+      });
+    return true;
+  });
+
+  ipcMain.handle("tasks:list", async (event, id: unknown) => {
+    assertTrustedRenderer(event);
+    if (typeof id !== "string" || id.length > 64) throw new Error("Invalid project identifier");
+    return apiRequest(`/api/projects/${encodeURIComponent(id)}/tasks`);
+  });
+
+  ipcMain.handle("tasks:plan", async (event, id: unknown, input: unknown, approvalGranted: unknown) => {
+    assertTrustedRenderer(event);
+    if (typeof id !== "string" || id.length > 64 || !input || typeof input !== "object" || approvalGranted !== true) {
+      throw new Error("Explicit approval and valid AI task details are required");
+    }
+    const value = input as Record<string, unknown>;
+    if ((value.provider !== "gemini" && value.provider !== "groq") ||
+        typeof value.model !== "string" || value.model.length > 120 ||
+        typeof value.title !== "string" || value.title.length > 160 ||
+        typeof value.description !== "string" || value.description.length > 4000) {
+      throw new Error("Invalid AI task planning input");
+    }
+    return apiRequest(`/api/projects/${encodeURIComponent(id)}/tasks/plan`, {
+      method: "POST", body: JSON.stringify({ ...value, approved: true })
+    });
+  });
+
+  ipcMain.handle("tasks:create", async (event, id: unknown, input: unknown) => {
+    assertTrustedRenderer(event);
+    if (typeof id !== "string" || id.length > 64 || !input || typeof input !== "object") {
+      throw new Error("Invalid task input");
+    }
+    return apiRequest(`/api/projects/${encodeURIComponent(id)}/tasks`, {
+      method: "POST",
+      body: JSON.stringify(input)
+    });
+  });
+
+  ipcMain.handle("tasks:status", async (event, id: unknown, taskId: unknown, status: unknown, note?: unknown) => {
+    assertTrustedRenderer(event);
+    if (typeof id !== "string" || id.length > 64 || typeof taskId !== "string" ||
+        typeof status !== "string" || (note !== undefined && typeof note !== "string")) {
+      throw new Error("Invalid task status update");
+    }
+    return apiRequest(`/api/projects/${encodeURIComponent(id)}/tasks/${encodeURIComponent(taskId)}/status`, {
+      method: "PUT",
+      body: JSON.stringify({ status, note })
+    });
+  });
+
+  ipcMain.handle("tasks:step", async (event, id: unknown, taskId: unknown, stepId: unknown, status: unknown, result?: unknown) => {
+    assertTrustedRenderer(event);
+    if (typeof id !== "string" || id.length > 64 || typeof taskId !== "string" ||
+        typeof stepId !== "string" || typeof status !== "string" ||
+        (result !== undefined && typeof result !== "string")) {
+      throw new Error("Invalid task step update");
+    }
+    return apiRequest(`/api/projects/${encodeURIComponent(id)}/tasks/${encodeURIComponent(taskId)}/steps/${encodeURIComponent(stepId)}`, {
+      method: "PUT",
+      body: JSON.stringify({ status, result })
+    });
+  });
+
+  ipcMain.handle("browser:start", async (event, id: unknown, approvalGranted: unknown) => {
+    assertTrustedRenderer(event);
+    if (typeof id !== "string" || id.length > 64 || approvalGranted !== true) {
+      throw new Error("Explicit approval and a valid project identifier are required");
+    }
+    return apiRequest(`/api/projects/${encodeURIComponent(id)}/browser/session`, {
+      method: "POST", body: JSON.stringify({ approved: true })
+    });
+  });
+
+  ipcMain.handle("browser:navigate", async (event, id: unknown, sessionId: unknown, url: unknown, approvalGranted: unknown) => {
+    assertTrustedRenderer(event);
+    if (typeof id !== "string" || id.length > 64 || typeof sessionId !== "string" ||
+        sessionId.length > 64 || typeof url !== "string" || url.length > 4096 || approvalGranted !== true) {
+      throw new Error("Explicit approval and valid browser navigation details are required");
+    }
+    return apiRequest(`/api/projects/${encodeURIComponent(id)}/browser/${encodeURIComponent(sessionId)}/navigate`, {
+      method: "POST", body: JSON.stringify({ url, approved: true })
+    });
+  });
+
+  ipcMain.handle("browser:snapshot", async (event, id: unknown, sessionId: unknown) => {
+    assertTrustedRenderer(event);
+    if (typeof id !== "string" || id.length > 64 || typeof sessionId !== "string" || sessionId.length > 64) {
+      throw new Error("Invalid browser session reference");
+    }
+    return apiRequest(`/api/projects/${encodeURIComponent(id)}/browser/${encodeURIComponent(sessionId)}/snapshot`);
+  });
+
+  ipcMain.handle("browser:click", async (event, id: unknown, sessionId: unknown, selector: unknown, approvalGranted: unknown) => {
+    assertTrustedRenderer(event);
+    if (typeof id !== "string" || id.length > 64 || typeof sessionId !== "string" || sessionId.length > 64 ||
+        typeof selector !== "string" || selector.length > 2000 || approvalGranted !== true) {
+      throw new Error("Explicit approval and valid browser click details are required");
+    }
+    return apiRequest(`/api/projects/${encodeURIComponent(id)}/browser/${encodeURIComponent(sessionId)}/click`, {
+      method: "POST", body: JSON.stringify({ selector, approved: true })
+    });
+  });
+
+  ipcMain.handle("browser:fill", async (event, id: unknown, sessionId: unknown, selector: unknown, value: unknown, approvalGranted: unknown) => {
+    assertTrustedRenderer(event);
+    if (typeof id !== "string" || id.length > 64 || typeof sessionId !== "string" || sessionId.length > 64 ||
+        typeof selector !== "string" || selector.length > 2000 || typeof value !== "string" || value.length > 2000 ||
+        approvalGranted !== true) {
+      throw new Error("Explicit approval and valid browser field details are required");
+    }
+    return apiRequest(`/api/projects/${encodeURIComponent(id)}/browser/${encodeURIComponent(sessionId)}/fill`, {
+      method: "POST", body: JSON.stringify({ selector, value, approved: true })
+    });
+  });
+
+  ipcMain.handle("browser:close", async (event, id: unknown, sessionId: unknown, approvalGranted: unknown) => {
+    assertTrustedRenderer(event);
+    if (typeof id !== "string" || id.length > 64 || typeof sessionId !== "string" || sessionId.length > 64 ||
+        approvalGranted !== true) {
+      throw new Error("Explicit approval and a valid browser session are required");
+    }
+    return apiRequest(`/api/projects/${encodeURIComponent(id)}/browser/${encodeURIComponent(sessionId)}/close`, {
+      method: "POST", body: JSON.stringify({ approved: true })
+    });
+  });
+
+  ipcMain.handle("files:read", async (event, id: unknown, filePath: unknown) => {
+    assertTrustedRenderer(event);
+    if (typeof id !== "string" || id.length > 64 || typeof filePath !== "string" || filePath.length > 4096) {
+      throw new Error("Invalid project file reference");
+    }
+    return apiRequest(`/api/projects/${encodeURIComponent(id)}/files?path=${encodeURIComponent(filePath)}`);
+  });
+
+  ipcMain.handle("edits:list", async (event, id: unknown) => {
+    assertTrustedRenderer(event);
+    if (typeof id !== "string" || id.length > 64) throw new Error("Invalid project identifier");
+    return apiRequest(`/api/projects/${encodeURIComponent(id)}/edit-proposals`);
+  });
+
+  ipcMain.handle("edits:propose", async (event, id: unknown, title: unknown, changes: unknown) => {
+    assertTrustedRenderer(event);
+    if (typeof id !== "string" || id.length > 64 || typeof title !== "string" || title.length > 160 ||
+        !Array.isArray(changes) || changes.length === 0 || changes.length > 20) {
+      throw new Error("Invalid edit proposal");
+    }
+    return apiRequest(`/api/projects/${encodeURIComponent(id)}/edit-proposals`, {
+      method: "POST",
+      body: JSON.stringify({ title, changes })
+    });
+  });
+
+  ipcMain.handle("edits:get", async (event, id: unknown, proposalId: unknown) => {
+    assertTrustedRenderer(event);
+    if (typeof id !== "string" || id.length > 64 || typeof proposalId !== "string") {
+      throw new Error("Invalid edit proposal reference");
+    }
+    return apiRequest(`/api/projects/${encodeURIComponent(id)}/edit-proposals/${encodeURIComponent(proposalId)}`);
+  });
+
+  ipcMain.handle("edits:apply", async (event, id: unknown, proposalId: unknown, approvalGranted: unknown) => {
+    assertTrustedRenderer(event);
+    if (typeof id !== "string" || id.length > 64 || typeof proposalId !== "string" || approvalGranted !== true) {
+      throw new Error("Explicit approval is required to apply this edit proposal");
+    }
+    return apiRequest(`/api/projects/${encodeURIComponent(id)}/edit-proposals/${encodeURIComponent(proposalId)}/apply`, {
+      method: "POST",
+      body: JSON.stringify({ approved: true })
+    });
+  });
+
+  ipcMain.handle("edits:reject", async (event, id: unknown, proposalId: unknown) => {
+    assertTrustedRenderer(event);
+    if (typeof id !== "string" || id.length > 64 || typeof proposalId !== "string") {
+      throw new Error("Invalid edit proposal reference");
+    }
+    await apiRequest(`/api/projects/${encodeURIComponent(id)}/edit-proposals/${encodeURIComponent(proposalId)}/reject`, { method: "POST" });
+    return true;
   });
 
   ipcMain.handle("snapshots:list", async (event, id: unknown, filePath?: unknown) => {
@@ -146,6 +498,7 @@ async function createWindow(): Promise<void> {
 
 app.whenReady().then(async () => {
   process.env.NEXUS_DATA_DIR = app.getPath("userData");
+  await loadProviderCredentials();
   api = await startApiServer(apiToken, 0);
   registerIpc();
   await createWindow();

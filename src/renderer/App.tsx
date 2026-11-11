@@ -59,6 +59,107 @@ interface SnapshotDiff {
   removed: string[];
   truncated: boolean;
 }
+interface EditableFile {
+  path: string;
+  exists: boolean;
+  hash: string | null;
+  content: string;
+  size: number;
+}
+interface EditChange {
+  path: string;
+  action: "write" | "delete" | "move";
+  expectedHash: string | null;
+  destinationPath?: string;
+  size: number;
+  currentHash: string | null;
+  conflict: boolean;
+  diff: string[];
+  diffTruncated: boolean;
+}
+interface EditProposal {
+  id: string;
+  projectId: string;
+  title: string;
+  status: "pending" | "applying" | "applied" | "rejected" | "failed";
+  createdAt: string;
+  completedAt?: string;
+  snapshotIds?: string[];
+  failureMessage?: string;
+  changes: EditChange[];
+}
+interface EditProposalList {
+  proposals: Array<Omit<EditProposal, "changes"> & { changes: Array<{ path: string; action: "write" | "delete" | "move"; expectedHash: string | null; destinationPath?: string; size: number }> }>;
+}
+interface DraftChange {
+  path: string;
+  action: "write" | "delete" | "move";
+  expectedHash: string | null;
+  destinationPath?: string;
+  content?: string;
+}
+interface TaskStep {
+  id: string;
+  title: string;
+  description: string;
+  dependencies: string[];
+  status: "pending" | "running" | "completed" | "failed" | "skipped";
+}
+interface TaskEvent {
+  id: string;
+  at: string;
+  type: string;
+  message: string;
+}
+interface Task {
+  id: string;
+  projectId: string;
+  title: string;
+  description: string;
+  priority: "low" | "normal" | "high";
+  status: "pending" | "planning" | "awaiting_approval" | "running" | "paused" | "failed" | "completed" | "cancelled";
+  steps: TaskStep[];
+  progress: number;
+  currentStepId: string | null;
+  error?: string;
+  events: TaskEvent[];
+}
+interface TaskList { tasks: Task[] }
+interface GeneratedPlanStep { title: string; description: string; dependencies: number[] }
+interface MemoryView {
+  id: string;
+  projectId: string | null;
+  title: string;
+  content: string;
+  enabled: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+interface MemoryList { memories: MemoryView[] }
+interface TerminalResult {
+  processId: string;
+  status: "running" | "completed" | "failed";
+  exitCode: number | null;
+  stdout: string;
+  stderr: string;
+  durationMs: number;
+  timedOut: boolean;
+  outputTruncated: boolean;
+}
+interface BrowserSnapshot {
+  sessionId: string;
+  url: string;
+  title: string;
+  text: string;
+  truncated: boolean;
+}
+interface BrowserSessionView extends BrowserSnapshot {}
+interface ProviderSettingsView {
+  providers: Array<{ id: "gemini" | "groq"; configured: boolean }>;
+  encryptionAvailable: boolean;
+}
+
+interface TerminalProcesses { processes: TerminalResult[] }
 
 export function App() {
   const [projects, setProjects] = useState<Project[]>([]);
@@ -68,6 +169,39 @@ export function App() {
   const [results, setResults] = useState<Record<string, ContextResult>>({});
   const [snapshots, setSnapshots] = useState<Record<string, Snapshot[]>>({});
   const [diffs, setDiffs] = useState<Record<string, SnapshotDiff>>({});
+  const [editPath, setEditPath] = useState("");
+  const [editTitle, setEditTitle] = useState("");
+  const [moveDestination, setMoveDestination] = useState("");
+  const [drafts, setDrafts] = useState<Record<string, EditableFile>>({});
+  const [editBatch, setEditBatch] = useState<Record<string, DraftChange[]>>({});
+  const [editProposals, setEditProposals] = useState<Record<string, EditProposalList["proposals"]>>({});
+  const [selectedEdits, setSelectedEdits] = useState<Record<string, EditProposal>>({});
+  const [taskTitle, setTaskTitle] = useState("");
+  const [taskDescription, setTaskDescription] = useState("");
+  const [taskPlan, setTaskPlan] = useState("");
+  const [generatedTaskPlan, setGeneratedTaskPlan] = useState<GeneratedPlanStep[]>([]);
+  const [planningProvider, setPlanningProvider] = useState<"gemini" | "groq">("gemini");
+  const [taskPriority, setTaskPriority] = useState<"low" | "normal" | "high">("normal");
+  const [tasksByProject, setTasksByProject] = useState<Record<string, Task[]>>({});
+  const [terminalCommand, setTerminalCommand] = useState("");
+  const [terminalShell, setTerminalShell] = useState<"powershell" | "cmd">("powershell");
+  const [terminalCwd, setTerminalCwd] = useState("");
+  const [terminalResults, setTerminalResults] = useState<Record<string, TerminalResult>>({});
+  const [browserUrl, setBrowserUrl] = useState("");
+  const [browserSelector, setBrowserSelector] = useState("");
+  const [browserValue, setBrowserValue] = useState("");
+  const [browserByProject, setBrowserByProject] = useState<Record<string, BrowserSessionView>>({});
+  const [providerConfigured, setProviderConfigured] = useState<Record<"gemini" | "groq", boolean>>({ gemini: false, groq: false });
+  const [providerEncryptionAvailable, setProviderEncryptionAvailable] = useState(false);
+  const [providerCredentials, setProviderCredentials] = useState<Record<"gemini" | "groq", string>>({ gemini: "", groq: "" });
+  const [providerModels, setProviderModels] = useState<Record<"gemini" | "groq", string>>({ gemini: "", groq: "" });
+  const [providerTestResult, setProviderTestResult] = useState("");
+  const [memoryTitle, setMemoryTitle] = useState("");
+  const [memoryContent, setMemoryContent] = useState("");
+  const [memoryScope, setMemoryScope] = useState<"user" | "project">("project");
+  const [editingMemoryId, setEditingMemoryId] = useState("");
+  const [memoriesByProject, setMemoriesByProject] = useState<Record<string, MemoryView[]>>({});
+  const [terminalProcesses, setTerminalProcesses] = useState<Record<string, TerminalResult[]>>({});
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
 
@@ -82,6 +216,76 @@ export function App() {
       setError(cause instanceof Error ? cause.message : "Could not load projects");
     });
   }, [refresh]);
+
+  useEffect(() => {
+    void refreshProviderSettings().catch((cause: unknown) => {
+      setError(cause instanceof Error ? cause.message : "Could not load provider settings");
+    });
+  }, []);
+
+  useEffect(() => {
+    const active = Object.entries(terminalProcesses).flatMap(([projectId, processes]) =>
+      processes.filter((item) => item.status === "running").map((item) => ({ projectId, processId: item.processId }))
+    );
+    if (active.length === 0) return;
+    const timer = window.setInterval(() => {
+      void Promise.all(active.map(async ({ projectId, processId }) => {
+        try {
+          return { projectId, result: await window.nexus.terminal.getProcess(projectId, processId) as TerminalResult };
+        } catch {
+          return null;
+        }
+      })).then((updates) => {
+        const valid = updates.filter((item): item is { projectId: string; result: TerminalResult } => item !== null);
+        if (!valid.length) return;
+        setTerminalResults((current) => {
+          const next = { ...current };
+          for (const item of valid) next[item.projectId] = item.result;
+          return next;
+        });
+        setTerminalProcesses((current) => {
+          const next = { ...current };
+          for (const item of valid) {
+            next[item.projectId] = (next[item.projectId] ?? []).map((process) => process.processId === item.result.processId
+              ? item.result : process).filter((process) => process.status === "running");
+          }
+          return next;
+        });
+      });
+    }, 500);
+    return () => window.clearInterval(timer);
+  }, [terminalProcesses]);
+
+  async function refreshProviderSettings() {
+    const result = await window.nexus.settings.listProviders() as ProviderSettingsView;
+    setProviderConfigured({
+      gemini: result.providers.some((item) => item.id === "gemini" && item.configured),
+      groq: result.providers.some((item) => item.id === "groq" && item.configured)
+    });
+    setProviderEncryptionAvailable(result.encryptionAvailable);
+  }
+
+  function saveProvider(provider: "gemini" | "groq", remove = false) {
+    return run(async () => {
+      const credential = remove ? null : providerCredentials[provider].trim();
+      if (!remove && !credential) throw new Error("Enter a provider API key first");
+      await window.nexus.settings.saveProviderCredential(provider, credential);
+      setProviderConfigured((current) => ({ ...current, [provider]: !remove }));
+      setProviderCredentials((current) => ({ ...current, [provider]: "" }));
+      setNotice(remove ? `${provider} key removed from this device.` : `${provider} key encrypted and stored on this device.`);
+    });
+  }
+
+  function testProvider(provider: "gemini" | "groq") {
+    return run(async () => {
+      const model = providerModels[provider].trim();
+      if (!model) throw new Error("Enter a model identifier for this provider");
+      const approved = window.confirm(`Send a short generic connection test to ${provider} using model ${model}?`);
+      if (!approved) return;
+      const result = await window.nexus.settings.testProvider(provider, model) as { text: string };
+      setProviderTestResult(`${provider}: ${result.text}`);
+    });
+  }
 
   async function run(action: () => Promise<void>) {
     setBusy(true);
@@ -164,6 +368,337 @@ export function App() {
     });
   }
 
+  function runTerminal(project: Project) {
+    return run(async () => {
+      const command = terminalCommand.trim();
+      if (!command) throw new Error("Enter a command to run");
+      const approved = window.confirm(`Run this ${terminalShell} command in ${project.name}${terminalCwd.trim() ? " / " + terminalCwd.trim() : ""}?\n\n${command}\n\nThe command can change project files or run other programs.`);
+      if (!approved) return;
+      const started = await window.nexus.terminal.run(project.id, {
+        command, shell: terminalShell, cwd: terminalCwd.trim() || undefined
+      }, true) as { processId: string };
+      const [result, processList] = await Promise.all([
+        window.nexus.terminal.getProcess(project.id, started.processId) as Promise<TerminalResult>,
+        window.nexus.terminal.listProcesses(project.id) as Promise<TerminalProcesses>
+      ]);
+      setTerminalResults((current) => ({ ...current, [project.id]: result }));
+      setTerminalProcesses((current) => ({ ...current, [project.id]: processList.processes }));
+      setNotice("Command started. Output and status update while it runs.");
+    });
+  }
+
+  function loadTerminalProcesses(project: Project) {
+    return run(async () => {
+      const result = await window.nexus.terminal.listProcesses(project.id) as TerminalProcesses;
+      setTerminalProcesses((current) => ({ ...current, [project.id]: result.processes }));
+    });
+  }
+
+  function stopTerminalProcess(project: Project, processId: string) {
+    return run(async () => {
+      const approved = window.confirm(`Stop process ${processId}? This terminates the process tree.`);
+      if (!approved) return;
+      await window.nexus.terminal.cancel(project.id, processId, true);
+      const result = await window.nexus.terminal.listProcesses(project.id) as TerminalProcesses;
+      setTerminalProcesses((current) => ({ ...current, [project.id]: result.processes }));
+    });
+  }
+
+  function loadMemories(project: Project) {
+    return run(async () => {
+      const result = await window.nexus.memories.list(project.id) as MemoryList;
+      setMemoriesByProject((current) => ({ ...current, [project.id]: result.memories }));
+    });
+  }
+
+  function saveMemory(project: Project) {
+    return run(async () => {
+      if (editingMemoryId) {
+        await window.nexus.memories.update(project.id, editingMemoryId, {
+          title: memoryTitle, content: memoryContent
+        });
+      } else {
+        await window.nexus.memories.create(project.id, memoryScope, memoryTitle, memoryContent);
+      }
+      const result = await window.nexus.memories.list(project.id) as MemoryList;
+      setMemoriesByProject((current) => ({ ...current, [project.id]: result.memories }));
+      setMemoryTitle("");
+      setMemoryContent("");
+      setEditingMemoryId("");
+      setNotice("Memory saved. Enabled memories may be included as untrusted context in AI plans.");
+    });
+  }
+
+  function toggleMemory(project: Project, memory: MemoryView) {
+    return run(async () => {
+      await window.nexus.memories.update(project.id, memory.id, { enabled: !memory.enabled });
+      const result = await window.nexus.memories.list(project.id) as MemoryList;
+      setMemoriesByProject((current) => ({ ...current, [project.id]: result.memories }));
+    });
+  }
+
+  function deleteMemory(project: Project, memory: MemoryView) {
+    return run(async () => {
+      if (!window.confirm(`Delete memory "${memory.title}"?`)) return;
+      await window.nexus.memories.remove(project.id, memory.id);
+      setMemoriesByProject((current) => ({
+        ...current,
+        [project.id]: (current[project.id] ?? []).filter((item) => item.id !== memory.id)
+      }));
+      if (editingMemoryId === memory.id) {
+        setEditingMemoryId("");
+        setMemoryTitle("");
+        setMemoryContent("");
+      }
+      setNotice("Memory deleted.");
+    });
+  }
+
+  function exportMemories(project: Project) {
+    return run(async () => {
+      if (!window.confirm(`Export user and ${project.name} memories to a JSON file?`)) return;
+      const saved = await window.nexus.memories.export(project.id);
+      if (saved) setNotice("Memory JSON export saved.");
+    });
+  }
+
+  function editMemory(memory: MemoryView) {
+    setEditingMemoryId(memory.id);
+    setMemoryTitle(memory.title);
+    setMemoryContent(memory.content);
+    setMemoryScope(memory.projectId === null ? "user" : "project");
+  }
+
+  function startBrowser(project: Project) {
+    return run(async () => {
+      const approved = window.confirm(`Start an isolated headless Chromium session for ${project.name}? Page content will be treated as untrusted text.`);
+      if (!approved) return;
+      const result = await window.nexus.browser.start(project.id, true) as { sessionId: string };
+      const initial = await window.nexus.browser.snapshot(project.id, result.sessionId) as BrowserSnapshot;
+      setBrowserByProject((current) => ({ ...current, [project.id]: initial }));
+      setNotice("Browser session started. Chromium browser binaries may need installation on this computer.");
+    });
+  }
+
+  function navigateBrowser(project: Project) {
+    return run(async () => {
+      const session = browserByProject[project.id];
+      const url = browserUrl.trim();
+      if (!session) throw new Error("Start a browser session first");
+      if (!url) throw new Error("Enter a complete http or https URL");
+      const approved = window.confirm(`Navigate the isolated browser to this URL?\n\n${url}\n\nThe page may load remote content; private/local destinations are restricted unless explicitly approved by the service.`);
+      if (!approved) return;
+      const snapshot = await window.nexus.browser.navigate(project.id, session.sessionId, url, true) as BrowserSnapshot;
+      setBrowserByProject((current) => ({ ...current, [project.id]: snapshot }));
+    });
+  }
+
+  function refreshBrowser(project: Project) {
+    return run(async () => {
+      const session = browserByProject[project.id];
+      if (!session) throw new Error("Start a browser session first");
+      const snapshot = await window.nexus.browser.snapshot(project.id, session.sessionId) as BrowserSnapshot;
+      setBrowserByProject((current) => ({ ...current, [project.id]: snapshot }));
+    });
+  }
+
+  function clickBrowser(project: Project) {
+    return run(async () => {
+      const session = browserByProject[project.id];
+      const selector = browserSelector.trim();
+      if (!session || !selector) throw new Error("Start a session and enter a selector");
+      const approved = window.confirm(`Click the first element matching this selector on ${session.url}?\n\n${selector}`);
+      if (!approved) return;
+      const snapshot = await window.nexus.browser.click(project.id, session.sessionId, selector, true) as BrowserSnapshot;
+      setBrowserByProject((current) => ({ ...current, [project.id]: snapshot }));
+    });
+  }
+
+  function fillBrowser(project: Project) {
+    return run(async () => {
+      const session = browserByProject[project.id];
+      const selector = browserSelector.trim();
+      if (!session || !selector) throw new Error("Start a session and enter a selector");
+      const approved = window.confirm(`Fill the first matching field on ${session.url}?\n\nSelector: ${selector}\nText: ${browserValue}`);
+      if (!approved) return;
+      const snapshot = await window.nexus.browser.fill(project.id, session.sessionId, selector, browserValue, true) as BrowserSnapshot;
+      setBrowserByProject((current) => ({ ...current, [project.id]: snapshot }));
+    });
+  }
+
+  function closeBrowser(project: Project) {
+    return run(async () => {
+      const session = browserByProject[project.id];
+      if (!session) return;
+      const approved = window.confirm(`Close the isolated browser session for ${project.name}?`);
+      if (!approved) return;
+      await window.nexus.browser.close(project.id, session.sessionId, true);
+      setBrowserByProject((current) => {
+        const next = { ...current };
+        delete next[project.id];
+        return next;
+      });
+      setNotice("Browser session closed.");
+    });
+  }
+
+  function loadTasks(project: Project) {
+    return run(async () => {
+      const result = await window.nexus.tasks.list(project.id) as TaskList;
+      setTasksByProject((current) => ({ ...current, [project.id]: result.tasks }));
+    });
+  }
+
+  function generatePlannedTask(project: Project) {
+    return run(async () => {
+      if (!taskTitle.trim() || !taskDescription.trim()) throw new Error("Enter a task title and description first");
+      const model = providerModels[planningProvider].trim();
+      if (!providerConfigured[planningProvider]) throw new Error(`${planningProvider} is not configured in AI provider settings`);
+      if (!model) throw new Error(`Enter the ${planningProvider} model identifier in AI provider settings`);
+      const approved = window.confirm(
+        `Send this task title and description plus up to 8 bounded repository excerpts to ${planningProvider} model ${model} for plan generation? Do not include secrets. The generated plan will be reviewed before saving.\n\n${taskTitle.trim()}\n\n${taskDescription.trim()}`
+      );
+      if (!approved) return;
+      const result = await window.nexus.tasks.plan(project.id, {
+        provider: planningProvider, model, title: taskTitle.trim(), description: taskDescription.trim()
+      }, true) as { steps: GeneratedPlanStep[] };
+      setGeneratedTaskPlan(result.steps);
+      setTaskPlan(result.steps.map((step) => step.title).join("\n"));
+      setNotice(`Generated a ${result.steps.length}-step plan. Review it below before saving.`);
+    });
+  }
+
+  function createPlannedTask(project: Project) {
+    return run(async () => {
+      const lines = taskPlan.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+      if (!lines.length) throw new Error("Enter at least one plan step");
+      const steps = generatedTaskPlan.length ? generatedTaskPlan : lines.map((title, index) => ({
+        title,
+        dependencies: index === 0 ? [] : [index - 1]
+      }));
+      await window.nexus.tasks.create(project.id, {
+        title: taskTitle,
+        description: taskDescription,
+        priority: taskPriority,
+        steps
+      });
+      const result = await window.nexus.tasks.list(project.id) as TaskList;
+      setTasksByProject((current) => ({ ...current, [project.id]: result.tasks }));
+      setTaskTitle("");
+      setTaskDescription("");
+      setTaskPlan("");
+      setNotice("Task and dependency plan saved.");
+    });
+  }
+
+  async function updateTask(project: Project, task: Task, status: Task["status"], note = "") {
+    const result = await window.nexus.tasks.setStatus(project.id, task.id, status, note) as { task: Task };
+    setTasksByProject((current) => ({
+      ...current,
+      [project.id]: (current[project.id] ?? []).map((item) => item.id === task.id ? result.task : item)
+    }));
+  }
+
+  async function updateTaskStep(project: Project, task: Task, step: TaskStep, status: TaskStep["status"]) {
+    const result = await window.nexus.tasks.setStep(project.id, task.id, step.id, status) as { task: Task };
+    setTasksByProject((current) => ({
+      ...current,
+      [project.id]: (current[project.id] ?? []).map((item) => item.id === task.id ? result.task : item)
+    }));
+  }
+
+  function loadEditFile(project: Project) {
+    return run(async () => {
+      const filePath = editPath.trim();
+      if (!filePath) throw new Error("Enter a project-relative path to inspect");
+      const file = await window.nexus.files.read(project.id, filePath) as EditableFile;
+      setDrafts((current) => ({ ...current, [project.id]: file }));
+      setNotice(file.exists ? `Loaded ${file.path} at hash ${file.hash?.slice(0, 12)}.` : `${file.path} will be created when the proposal is applied.`);
+    });
+  }
+
+  function queueEditChange(project: Project, action: "write" | "delete" | "move") {
+    return run(async () => {
+      const draft = drafts[project.id];
+      if (!draft) throw new Error("Inspect the file before staging a change");
+      if (action !== "write" && !draft.exists) throw new Error("The file does not exist");
+      if (action === "move" && !moveDestination.trim()) throw new Error("Enter a destination path for the move");
+      const batch = editBatch[project.id] ?? [];
+      if (batch.some((change) => change.path === draft.path)) throw new Error("This file is already in the proposal batch");
+      if (batch.length >= 19) throw new Error("A proposal can contain at most 20 file changes");
+      const change: DraftChange = {
+        path: draft.path,
+        action,
+        expectedHash: draft.hash,
+        ...(action === "write" ? { content: draft.content } : {}),
+        ...(action === "move" ? { destinationPath: moveDestination.trim() } : {})
+      };
+      setEditBatch((current) => ({ ...current, [project.id]: [...batch, change] }));
+      setNotice(`Added ${draft.path} to the proposal batch.`);
+    });
+  }
+
+  function stageEditBatch(project: Project) {
+    return run(async () => {
+      const batch = editBatch[project.id] ?? [];
+      if (batch.length === 0) throw new Error("Add at least one file change to the batch");
+      const result = await window.nexus.edits.propose(project.id, editTitle.trim() || `Edit ${batch.length} file(s)`, batch) as EditProposal;
+      const list = await window.nexus.edits.list(project.id) as EditProposalList;
+      setEditProposals((current) => ({ ...current, [project.id]: list.proposals }));
+      setSelectedEdits((current) => ({ ...current, [project.id]: result }));
+      setEditBatch((current) => ({ ...current, [project.id]: [] }));
+      setNotice(`Prepared a ${batch.length}-file proposal. Review its diffs before applying.`);
+    });
+  }
+
+  function loadEditProposals(project: Project) {
+    return run(async () => {
+      const list = await window.nexus.edits.list(project.id) as EditProposalList;
+      setEditProposals((current) => ({ ...current, [project.id]: list.proposals }));
+    });
+  }
+
+  function inspectEditProposal(project: Project, proposalId: string) {
+    return run(async () => {
+      const proposal = await window.nexus.edits.get(project.id, proposalId) as EditProposal;
+      setSelectedEdits((current) => ({ ...current, [project.id]: proposal }));
+    });
+  }
+
+  function applyEditProposal(project: Project, proposal: EditProposal) {
+    return run(async () => {
+      if (proposal.changes.some((change) => change.conflict)) {
+        throw new Error("A file changed after this proposal was prepared. Reject it and prepare a new proposal.");
+      }
+      const accepted = window.confirm(`Apply “${proposal.title}” to ${proposal.changes.length} file(s)? A recovery snapshot will be saved first.`);
+      if (!accepted) return;
+      await window.nexus.edits.apply(project.id, proposal.id, true);
+      const [list, updated] = await Promise.all([
+        window.nexus.edits.list(project.id) as Promise<EditProposalList>,
+        window.nexus.edits.get(project.id, proposal.id) as Promise<EditProposal>
+      ]);
+      setEditProposals((current) => ({ ...current, [project.id]: list.proposals }));
+      setSelectedEdits((current) => ({ ...current, [project.id]: updated }));
+      const draft = drafts[project.id];
+      if (draft) {
+        const refreshed = await window.nexus.files.read(project.id, draft.path) as EditableFile;
+        setDrafts((current) => ({ ...current, [project.id]: refreshed }));
+      }
+      setNotice("Proposal applied and recovery snapshots recorded.");
+    });
+  }
+
+  function rejectEditProposal(project: Project, proposal: EditProposal) {
+    return run(async () => {
+      await window.nexus.edits.reject(project.id, proposal.id);
+      const list = await window.nexus.edits.list(project.id) as EditProposalList;
+      setEditProposals((current) => ({ ...current, [project.id]: list.proposals }));
+      const updated = await window.nexus.edits.get(project.id, proposal.id) as EditProposal;
+      setSelectedEdits((current) => ({ ...current, [project.id]: updated }));
+      setNotice("Edit proposal rejected.");
+    });
+  }
+
   function removeProject(project: Project) {
     return run(async () => {
       await window.nexus.projects.remove(project.id);
@@ -202,6 +737,31 @@ export function App() {
       {error && <div className="message error" role="alert">{error}</div>}
       {notice && <div className="message" role="status">{notice}</div>}
 
+      <section className="task-panel">
+        <h2>AI providers</h2>
+        <p className="muted small">Only Gemini and Groq are supported. API keys are encrypted with Electron OS-backed storage on this device and never returned to the renderer after saving.</p>
+        {!providerEncryptionAvailable && <p className="message error">OS-backed credential encryption is unavailable. Provider keys cannot be saved securely.</p>}
+        {(["gemini", "groq"] as const).map((provider) => (
+          <div className="snapshot-row" key={provider}>
+            <div className="task-form">
+              <strong>{provider === "gemini" ? "Google Gemini" : "Groq"} · {providerConfigured[provider] ? "configured" : "not configured"}</strong>
+              <input type="password" autoComplete="new-password" value={providerCredentials[provider]}
+                onChange={(event) => setProviderCredentials((current) => ({ ...current, [provider]: event.target.value }))}
+                maxLength={4096} placeholder={providerConfigured[provider] ? "Enter a replacement key" : "Paste API key"}
+                aria-label={`${provider} API key`} />
+              <div className="search-row">
+                <input value={providerModels[provider]} onChange={(event) => setProviderModels((current) => ({ ...current, [provider]: event.target.value }))}
+                  maxLength={120} placeholder="Model identifier" aria-label={`${provider} model identifier`} />
+                <button className="secondary-button" onClick={() => void saveProvider(provider)} disabled={busy || !providerEncryptionAvailable}>Save key</button>
+                {providerConfigured[provider] && <button className="text-button" onClick={() => void saveProvider(provider, true)} disabled={busy}>Remove key</button>}
+                <button className="text-button" onClick={() => void testProvider(provider)} disabled={busy || !providerConfigured[provider]}>Test provider</button>
+              </div>
+            </div>
+          </div>
+        ))}
+        {providerTestResult && <p className="muted small" role="status">{providerTestResult}</p>}
+      </section>
+
       <section className="project-list" aria-label="Registered projects">
         {projects.length === 0 ? (
           <div className="empty-state">
@@ -228,6 +788,282 @@ export function App() {
                 <button className="secondary-button" onClick={() => void rescan(project)} disabled={busy}>Rescan</button>
                 <button className="text-button" onClick={() => void removeProject(project)} disabled={busy}>Remove</button>
               </div>
+
+              <section className="task-panel">
+                <h3>Terminal</h3>
+                <p className="muted small">Run a command in this project. Every run requires confirmation and is limited to two minutes and 128 KiB of output.</p>
+                <div className="task-form">
+                  <select value={terminalShell} onChange={(event) => setTerminalShell(event.target.value as typeof terminalShell)} aria-label="Command shell">
+                    <option value="powershell">PowerShell</option>
+                    <option value="cmd">Command Prompt</option>
+                  </select>
+                  <input value={terminalCwd} onChange={(event) => setTerminalCwd(event.target.value)} maxLength={4096}
+                    placeholder="Working directory inside project (optional)" aria-label="Project-relative working directory" />
+                  <textarea value={terminalCommand} onChange={(event) => setTerminalCommand(event.target.value)} maxLength={16000}
+                    placeholder="Enter command" aria-label="Terminal command" />
+                  <div className="actions">
+                    <button className="secondary-button" onClick={() => void runTerminal(project)} disabled={busy || !terminalCommand.trim()}>Review and run</button>
+                    <button className="text-button" onClick={() => void loadTerminalProcesses(project)} disabled={busy}>Owned processes</button>
+                  </div>
+                </div>
+                {terminalResults[project.id] && (
+                  <>
+                  <p className="muted small">Process {terminalResults[project.id].processId} · {terminalResults[project.id].status.toUpperCase()}{terminalResults[project.id].exitCode !== null ? ` · exit ${terminalResults[project.id].exitCode}` : ""}</p>
+                  <pre className="diff-view" aria-live="polite">{terminalResults[project.id].stdout}{terminalResults[project.id].stderr ? `\n${terminalResults[project.id].stderr}` : ""}
+                    {terminalResults[project.id].outputTruncated ? "\n… output truncated at 128 KiB" : ""}
+                    {terminalResults[project.id].timedOut ? "\n… command timed out" : ""}
+                  </pre>
+                  </>
+                )}
+                {(terminalProcesses[project.id] ?? []).map((process) => (
+                  <div className="snapshot-row" key={process.processId}>
+                    <code>{process.processId}</code>
+                    <button className="text-button" onClick={() => void stopTerminalProcess(project, process.processId)} disabled={busy}>Stop</button>
+                  </div>
+                ))}
+              </section>
+
+                            <section className="task-panel">
+                <div className="project-heading">
+                  <div>
+                    <h3>Memory</h3>
+                    <p className="muted small">Inspect and edit user or project notes. Secret-like values are rejected; enabled memories may be sent as untrusted context during confirmed AI planning.</p>
+                  </div>
+                  <div className="actions">
+                    <button className="text-button" onClick={() => void loadMemories(project)} disabled={busy}>Refresh</button>
+                    <button className="text-button" onClick={() => void exportMemories(project)} disabled={busy}>Export JSON</button>
+                  </div>
+                </div>
+                <div className="task-form">
+                  <select value={memoryScope} onChange={(event) => setMemoryScope(event.target.value as typeof memoryScope)} aria-label="Memory scope">
+                    <option value="project">This project</option>
+                    <option value="user">User memory</option>
+                  </select>
+                  <input value={memoryTitle} onChange={(event) => setMemoryTitle(event.target.value)}
+                    maxLength={120} placeholder="Memory title" aria-label="Memory title" />
+                  <textarea value={memoryContent} onChange={(event) => setMemoryContent(event.target.value)}
+                    maxLength={4000} placeholder="A preference or project fact to remember" aria-label="Memory content" />
+                  <div className="actions">
+                    <button className="secondary-button" onClick={() => void saveMemory(project)} disabled={busy || !memoryTitle.trim() || !memoryContent.trim()}>
+                      {editingMemoryId ? "Save memory changes" : "Add memory"}
+                    </button>
+                    {editingMemoryId && <button className="text-button" onClick={() => { setEditingMemoryId(""); setMemoryTitle(""); setMemoryContent(""); }}>Cancel edit</button>}
+                  </div>
+                </div>
+                {(memoriesByProject[project.id] ?? []).length === 0 ? <p className="muted small">Load memories to view saved user and project notes.</p> :
+                  (memoriesByProject[project.id] ?? []).map((memory) => (
+                    <div className="snapshot-row" key={memory.id}>
+                      <div className="snapshot-meta">
+                        <strong>{memory.title} · {memory.projectId === null ? "USER" : "PROJECT"} · {memory.enabled ? "ENABLED" : "DISABLED"}</strong>
+                        <p>{memory.content}</p>
+                        <span>Updated {new Date(memory.updatedAt).toLocaleString()}</span>
+                      </div>
+                      <div className="snapshot-buttons">
+                        <button className="text-button" onClick={() => editMemory(memory)} disabled={busy}>Edit</button>
+                        <button className="text-button" onClick={() => void toggleMemory(project, memory)} disabled={busy}>{memory.enabled ? "Disable" : "Enable"}</button>
+                        <button className="text-button" onClick={() => void deleteMemory(project, memory)} disabled={busy}>Delete</button>
+                      </div>
+                    </div>
+                  ))}
+              </section>
+
+              <section className="task-panel">
+                <h3>Isolated browser</h3>
+                <p className="muted small">Headless Chromium with bounded text snapshots. Navigation, clicks, form fills, and closing require confirmation; page text is untrusted.</p>
+                <div className="task-form">
+                  <div className="search-row">
+                    <input value={browserUrl} onChange={(event) => setBrowserUrl(event.target.value)} maxLength={4096}
+                      placeholder="https://example.com" aria-label="Browser URL" />
+                    {!browserByProject[project.id] ?
+                      <button className="secondary-button" onClick={() => void startBrowser(project)} disabled={busy}>Start browser</button> :
+                      <button className="secondary-button" onClick={() => void navigateBrowser(project)} disabled={busy}>Review and navigate</button>}
+                  </div>
+                  {browserByProject[project.id] && (
+                    <>
+                      <p className="muted small">Session {browserByProject[project.id].sessionId} · {browserByProject[project.id].url || "about:blank"}</p>
+                      <div className="search-row">
+                        <input value={browserSelector} onChange={(event) => setBrowserSelector(event.target.value)} maxLength={2000}
+                          placeholder="CSS selector, e.g. input[name=email]" aria-label="Browser element selector" />
+                        <button className="text-button" onClick={() => void clickBrowser(project)} disabled={busy || !browserSelector.trim()}>Confirm click</button>
+                      </div>
+                      <div className="search-row">
+                        <input value={browserValue} onChange={(event) => setBrowserValue(event.target.value)} maxLength={2000}
+                          placeholder="Text to fill" aria-label="Text to fill in browser" />
+                        <button className="text-button" onClick={() => void fillBrowser(project)} disabled={busy || !browserSelector.trim()}>Confirm fill</button>
+                      </div>
+                      <div className="actions">
+                        <button className="text-button" onClick={() => void refreshBrowser(project)} disabled={busy}>Refresh page text</button>
+                        <button className="text-button" onClick={() => void closeBrowser(project)} disabled={busy}>Close session</button>
+                      </div>
+                      <section className="source-result" aria-live="polite">
+                        <strong>{browserByProject[project.id].title || "Page snapshot"}</strong>
+                        <pre>{browserByProject[project.id].text || "(No visible page text)"}{browserByProject[project.id].truncated ? "\n… page text truncated at 12,000 characters" : ""}</pre>
+                      </section>
+                    </>
+                  )}
+                </div>
+              </section>
+
+<section className="task-panel">
+                <div className="project-heading">
+                  <div>
+                    <h3>Task planner</h3>
+                    <p className="muted small">Save a dependency-aware plan and track each step. Execution is manual until the background agent engine is implemented.</p>
+                  </div>
+                  <button className="text-button" onClick={() => void loadTasks(project)} disabled={busy}>Task history</button>
+                </div>
+                <div className="task-form">
+                  <input value={taskTitle} onChange={(event) => setTaskTitle(event.target.value)}
+                    maxLength={160} placeholder="Task title" aria-label="Task title" />
+                  <textarea value={taskDescription} onChange={(event) => setTaskDescription(event.target.value)}
+                    maxLength={4000} placeholder="Describe the intended outcome" aria-label="Task description" />
+                  <textarea value={taskPlan} onChange={(event) => {
+                    setTaskPlan(event.target.value);
+                    setGeneratedTaskPlan([]);
+                  }}
+                    placeholder={"One plan step per line\nInspect existing code\nImplement the change\nVerify the result"} aria-label="Task plan steps" />
+                  {generatedTaskPlan.length > 0 && (
+                    <ol className="task-steps">
+                      {generatedTaskPlan.map((step, index) => (
+                        <li key={index}>
+                          <span>{step.title}{step.dependencies.length ? ` · depends on step(s) ${step.dependencies.map((dependency) => dependency + 1).join(", ")}` : ""}</span>
+                          {step.description && <small className="muted">{step.description}</small>}
+                        </li>
+                      ))}
+                    </ol>
+                  )}
+                  <div className="actions">
+                    <select value={taskPriority} onChange={(event) => setTaskPriority(event.target.value as typeof taskPriority)} aria-label="Task priority">
+                      <option value="low">Low priority</option>
+                      <option value="normal">Normal priority</option>
+                      <option value="high">High priority</option>
+                    </select>
+                    <select value={planningProvider} onChange={(event) => setPlanningProvider(event.target.value as typeof planningProvider)} aria-label="AI planning provider">
+                      <option value="gemini">Gemini</option>
+                      <option value="groq">Groq</option>
+                    </select>
+                    <button className="text-button" onClick={() => void generatePlannedTask(project)} disabled={busy || !taskTitle.trim() || !taskDescription.trim()}>Generate AI plan</button>
+                    <button className="secondary-button" onClick={() => void createPlannedTask(project)} disabled={busy || !taskTitle.trim()}>Save plan</button>
+                  </div>
+                </div>
+                {(tasksByProject[project.id] ?? []).map((task) => (
+                  <article className="task-card" key={task.id}>
+                    <div className="project-heading">
+                      <strong>{task.title}</strong>
+                      <span className="index-badge">{task.status.toUpperCase()} · {task.progress}%</span>
+                    </div>
+                    <p className="muted small">{task.priority.toUpperCase()} PRIORITY · {task.description}</p>
+                    <progress value={task.progress} max="100" aria-label="Task progress" />
+                    <ol className="task-steps">
+                      {task.steps.map((step) => (
+                        <li key={step.id}>
+                          <span>{step.title} · {step.status}{step.dependencies.length ? " · depends on earlier steps" : ""}</span>
+                          {step.description && <small className="muted">{step.description}</small>}
+                          {task.status === "running" && step.status === "pending" &&
+                            <button className="text-button" onClick={() => void run(() => updateTaskStep(project, task, step, "running"))} disabled={busy}>Start</button>}
+                          {task.status === "running" && step.status === "running" &&
+                            <button className="text-button" onClick={() => void run(() => updateTaskStep(project, task, step, "completed"))} disabled={busy}>Complete</button>}
+                        </li>
+                      ))}
+                    </ol>
+                    <div className="actions">
+                      {task.status === "pending" && <button className="text-button" onClick={() => void run(() => updateTask(project, task, "planning"))} disabled={busy}>Start planning</button>}
+                      {task.status === "planning" && <button className="text-button" onClick={() => void run(() => updateTask(project, task, "awaiting_approval"))} disabled={busy}>Request approval</button>}
+                      {task.status === "awaiting_approval" && <button className="secondary-button" onClick={() => void run(() => updateTask(project, task, "running"))} disabled={busy}>Approve and run</button>}
+                      {task.status === "running" && <button className="text-button" onClick={() => void run(() => updateTask(project, task, "paused"))} disabled={busy}>Pause</button>}
+                      {(task.status === "paused" || task.status === "failed") && <button className="text-button" onClick={() => void run(() => updateTask(project, task, "running"))} disabled={busy}>Resume</button>}
+                      {task.status === "running" && task.progress === 100 && <button className="text-button" onClick={() => void run(() => updateTask(project, task, "completed"))} disabled={busy}>Mark complete</button>}
+                      {!["completed", "cancelled"].includes(task.status) && <button className="text-button" onClick={() => void run(() => updateTask(project, task, "cancelled"))} disabled={busy}>Cancel</button>}
+                    </div>
+                    <details className="task-events">
+                      <summary>Execution history ({task.events.length})</summary>
+                      <ul>{task.events.slice(-10).reverse().map((event) => (
+                        <li key={event.id}><time>{new Date(event.at).toLocaleString()}</time> · {event.message}</li>
+                      ))}</ul>
+                    </details>
+                    {task.error && <p className="message error">{task.error}</p>}
+                  </article>
+                ))}
+              </section>
+
+              <section className="edit-panel">
+                <h3>Reviewable code edits</h3>
+                <p className="muted small">Inspect a project file, stage a change, review the diff, then approve or reject it. Project files stay local.</p>
+                <div className="search-row">
+                  <input value={editPath} onChange={(event) => setEditPath(event.target.value)}
+                    maxLength={4096} placeholder="src/components/App.tsx" aria-label="File to edit" />
+                  <button className="secondary-button" onClick={() => void loadEditFile(project)} disabled={busy}>Inspect</button>
+                </div>
+                {drafts[project.id] && (
+                  <div className="edit-draft">
+                    <p className="muted small">
+                      {drafts[project.id].exists ? `Current hash ${drafts[project.id].hash}` : "New file"}
+                    </p>
+                    <input value={editTitle} onChange={(event) => setEditTitle(event.target.value)}
+                      maxLength={160} placeholder="Change title" aria-label="Change title" />
+                    <textarea value={drafts[project.id].content}
+                      onChange={(event) => setDrafts((current) => ({
+                        ...current,
+                        [project.id]: { ...current[project.id], content: event.target.value }
+                      }))}
+                      maxLength={1_000_000} spellCheck={false} aria-label="Proposed file content" />
+                    <div className="actions">
+                      <button className="secondary-button" onClick={() => void queueEditChange(project, "write")} disabled={busy}>Add change</button>
+                      {drafts[project.id].exists && (
+                        <>
+                          <button className="text-button" onClick={() => void queueEditChange(project, "delete")} disabled={busy}>Add delete</button>
+                          <input value={moveDestination} onChange={(event) => setMoveDestination(event.target.value)}
+                            maxLength={4096} placeholder="New project-relative path" aria-label="Move destination" />
+                          <button className="text-button" onClick={() => void queueEditChange(project, "move")} disabled={busy}>Add move</button>
+                        </>
+                      )}
+                      <button className="text-button" onClick={() => void loadEditProposals(project)} disabled={busy}>Edit history</button>
+                    </div>
+                    {(editBatch[project.id] ?? []).length > 0 && (
+                      <div className="edit-batch">
+                        <p className="muted small">Queued {editBatch[project.id].length} file change(s): {editBatch[project.id].map((change) => change.path).join(", ")}</p>
+                        <button className="primary-button" onClick={() => void stageEditBatch(project)} disabled={busy}>
+                          Review {editBatch[project.id].length}-file proposal
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
+                {(editProposals[project.id] ?? []).length > 0 && (
+                  <div className="edit-history">
+                    {(editProposals[project.id] ?? []).map((proposal) => (
+                      <button className="edit-history-item" key={proposal.id}
+                        onClick={() => void inspectEditProposal(project, proposal.id)} disabled={busy}>
+                        {proposal.title} · {proposal.status} · {proposal.changes.length} file(s)
+                      </button>
+                    ))}
+                  </div>
+                )}
+                {selectedEdits[project.id] && (
+                  <div className="edit-review">
+                    <div className="project-heading">
+                      <strong>{selectedEdits[project.id].title}</strong>
+                      <span className="index-badge">{selectedEdits[project.id].status.toUpperCase()}</span>
+                    </div>
+                    {selectedEdits[project.id].changes.map((change) => (
+                      <section className="source-result" key={change.path}>
+                        <div className="source-heading"><strong>{change.path}{change.destinationPath ? ` → ${change.destinationPath}` : ""} · {change.action}</strong>
+                          <span>{change.conflict ? "CONFLICT" : "READY"}</span></div>
+                        <pre className="diff-view">{change.diff.join("\n")}{change.diffTruncated ? "\n… diff is bounded" : ""}</pre>
+                      </section>
+                    ))}
+                    {selectedEdits[project.id].status === "pending" && (
+                      <div className="actions">
+                        <button className="primary-button" onClick={() => void applyEditProposal(project, selectedEdits[project.id])}
+                          disabled={busy || selectedEdits[project.id].changes.some((change) => change.conflict)}>Apply approved change</button>
+                        <button className="text-button" onClick={() => void rejectEditProposal(project, selectedEdits[project.id])} disabled={busy}>Reject</button>
+                      </div>
+                    )}
+                    {selectedEdits[project.id].failureMessage &&
+                      <p className="message error">{selectedEdits[project.id].failureMessage}</p>}
+                  </div>
+                )}
+              </section>
 
               <form className="context-search" onSubmit={(event) => { event.preventDefault(); void search(project); }}>
                 <label htmlFor={`query-${project.id}`}>Find relevant code</label>
@@ -295,7 +1131,7 @@ export function App() {
         })}
       </section>
 
-      <footer>PHASE 4 · VERSION HISTORY · RESTORE CHECKS FILE HASHES</footer>
+      <footer>PHASE 3 · REVIEWABLE EDITS · SNAPSHOT BEFORE APPLY</footer>
     </main>
   );
 }

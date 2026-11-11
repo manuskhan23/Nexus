@@ -17,4 +17,70 @@ const snapshots = Object.freeze({
     ipcRenderer.invoke("snapshots:restore", projectId, snapshotId, expectedCurrentHash)
 });
 
-contextBridge.exposeInMainWorld("nexus", Object.freeze({ projects, snapshots }));
+const terminal = Object.freeze({
+  run: (projectId: string, input: unknown, approvalGranted: boolean) =>
+    ipcRenderer.invoke("terminal:run", projectId, input, approvalGranted),
+  listProcesses: (projectId: string) => ipcRenderer.invoke("terminal:processes", projectId),
+  getProcess: (projectId: string, processId: string) => ipcRenderer.invoke("terminal:get", projectId, processId),
+  cancel: (projectId: string, processId: string, approvalGranted: boolean) =>
+    ipcRenderer.invoke("terminal:cancel", projectId, processId, approvalGranted)
+});
+
+const memories = Object.freeze({
+  list: (projectId: string) => ipcRenderer.invoke("memories:list", projectId),
+  create: (projectId: string, scope: "user" | "project", title: string, content: string) =>
+    ipcRenderer.invoke("memories:create", projectId, scope, title, content),
+  update: (projectId: string, memoryId: string, input: unknown) =>
+    ipcRenderer.invoke("memories:update", projectId, memoryId, input),
+  remove: (projectId: string, memoryId: string) => ipcRenderer.invoke("memories:remove", projectId, memoryId),
+  export: (projectId: string) => ipcRenderer.invoke("memories:export", projectId)
+});
+
+const settings = Object.freeze({
+  listProviders: () => ipcRenderer.invoke("settings:providers"),
+  saveProviderCredential: (provider: "gemini" | "groq", credential: string | null) =>
+    ipcRenderer.invoke("settings:provider-credential", provider, credential),
+  testProvider: (provider: "gemini" | "groq", model: string) =>
+    ipcRenderer.invoke("settings:provider-test", provider, model)
+});
+
+const browser = Object.freeze({
+  start: (projectId: string, approvalGranted: boolean) =>
+    ipcRenderer.invoke("browser:start", projectId, approvalGranted),
+  navigate: (projectId: string, sessionId: string, url: string, approvalGranted: boolean) =>
+    ipcRenderer.invoke("browser:navigate", projectId, sessionId, url, approvalGranted),
+  snapshot: (projectId: string, sessionId: string) =>
+    ipcRenderer.invoke("browser:snapshot", projectId, sessionId),
+  click: (projectId: string, sessionId: string, selector: string, approvalGranted: boolean) =>
+    ipcRenderer.invoke("browser:click", projectId, sessionId, selector, approvalGranted),
+  fill: (projectId: string, sessionId: string, selector: string, value: string, approvalGranted: boolean) =>
+    ipcRenderer.invoke("browser:fill", projectId, sessionId, selector, value, approvalGranted),
+  close: (projectId: string, sessionId: string, approvalGranted: boolean) =>
+    ipcRenderer.invoke("browser:close", projectId, sessionId, approvalGranted)
+});
+
+const tasks = Object.freeze({
+  list: (projectId: string) => ipcRenderer.invoke("tasks:list", projectId),
+  create: (projectId: string, input: unknown) => ipcRenderer.invoke("tasks:create", projectId, input),
+  plan: (projectId: string, input: unknown, approvalGranted: boolean) => ipcRenderer.invoke("tasks:plan", projectId, input, approvalGranted),
+  setStatus: (projectId: string, taskId: string, status: string, note?: string) =>
+    ipcRenderer.invoke("tasks:status", projectId, taskId, status, note),
+  setStep: (projectId: string, taskId: string, stepId: string, status: string, result?: string) =>
+    ipcRenderer.invoke("tasks:step", projectId, taskId, stepId, status, result)
+});
+
+const files = Object.freeze({
+  read: (projectId: string, filePath: string) => ipcRenderer.invoke("files:read", projectId, filePath)
+});
+
+const edits = Object.freeze({
+  list: (projectId: string) => ipcRenderer.invoke("edits:list", projectId),
+  propose: (projectId: string, title: string, changes: unknown[]) =>
+    ipcRenderer.invoke("edits:propose", projectId, title, changes),
+  get: (projectId: string, proposalId: string) => ipcRenderer.invoke("edits:get", projectId, proposalId),
+  apply: (projectId: string, proposalId: string, approvalGranted: boolean) =>
+    ipcRenderer.invoke("edits:apply", projectId, proposalId, approvalGranted),
+  reject: (projectId: string, proposalId: string) => ipcRenderer.invoke("edits:reject", projectId, proposalId)
+});
+
+contextBridge.exposeInMainWorld("nexus", Object.freeze({ projects, snapshots, files, edits, tasks, terminal, browser, settings, memories }));
