@@ -233,7 +233,7 @@ export function createApiApp(apiToken: string): express.Express {
     try {
       const execution = await toolRegistry.execute("terminal.list", { projectId: request.params.id },
         { projectId: request.params.id, approved: false });
-      response.json({ processIds: execution.result });
+      response.json({ processes: execution.result });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Process listing failed";
       response.status(message === "Project not found" ? 404 : 400).json({ error: message });
@@ -265,6 +265,18 @@ export function createApiApp(apiToken: string): express.Express {
       const status = message === "Project not found" ? 404 :
         message.startsWith("Explicit approval") ? 403 : 400;
       response.status(status).json({ error: message });
+    }
+  });
+
+  app.get("/api/projects/:id/terminal/processes/:processId", async (request, response) => {
+    try {
+      const execution = await toolRegistry.execute("terminal.get", {
+        projectId: request.params.id, processId: request.params.processId
+      }, { projectId: request.params.id, approved: false });
+      response.json(execution.result);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Process lookup failed";
+      response.status(message === "Process not found" ? 404 : 400).json({ error: message });
     }
   });
 
