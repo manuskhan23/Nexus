@@ -32,6 +32,14 @@ declare global {
         getProcess(projectId: string, processId: string): Promise<unknown>;
         cancel(projectId: string, processId: string, approvalGranted: boolean): Promise<unknown>;
       };
+      browser: {
+        start(projectId: string, approvalGranted: boolean): Promise<unknown>;
+        navigate(projectId: string, sessionId: string, url: string, approvalGranted: boolean): Promise<unknown>;
+        snapshot(projectId: string, sessionId: string): Promise<unknown>;
+        click(projectId: string, sessionId: string, selector: string, approvalGranted: boolean): Promise<unknown>;
+        fill(projectId: string, sessionId: string, selector: string, value: string, approvalGranted: boolean): Promise<unknown>;
+        close(projectId: string, sessionId: string, approvalGranted: boolean): Promise<unknown>;
+      };
       tasks: {
         list(projectId: string): Promise<unknown>;
         create(projectId: string, input: unknown): Promise<unknown>;
