@@ -412,6 +412,30 @@ export function createApiApp(apiToken: string): express.Express {
     response.json({ tasks: await projectStore.listTasks(project.id) });
   });
 
+  app.post("/api/projects/:id/tasks/plan", async (request, response) => {
+    const { provider, model, title, description } = request.body ?? {};
+    if (request.body?.approved !== true) {
+      response.status(403).json({ error: "Explicit approval is required before sending task context to an AI provider" });
+      return;
+    }
+    if ((provider !== "gemini" && provider !== "groq") || typeof model !== "string" || model.length > 120 ||
+        typeof title !== "string" || title.length > 160 ||
+        typeof description !== "string" || description.length > 4000) {
+      response.status(400).json({ error: "Invalid AI task planning request" });
+      return;
+    }
+    try {
+      const execution = await toolRegistry.execute("tasks.plan", {
+        projectId: request.params.id, provider, model, title, description
+      }, { projectId: request.params.id, approved: true });
+      response.json(execution.result);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "AI task planning failed";
+      const status = message === "Project not found" ? 404 : 400;
+      response.status(status).json({ error: message });
+    }
+  });
+
   app.post("/api/projects/:id/tasks", async (request, response) => {
     const title: unknown = request.body?.title;
     const description: unknown = request.body?.description;
