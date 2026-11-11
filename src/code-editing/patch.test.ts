@@ -23,9 +23,9 @@ test("structured patches enforce count and content limits", () => {
     { expectedText: "a", replacementText: "x".repeat(20_001) }
   ]), /Invalid structured patch/);
 
-  const original = Array.from({ length: 60 }, (_, index) => `placeholder-${index}`).join("\\n");
+  const original = Array.from({ length: 60 }, (_, index) => `marker-${String(index).padStart(3, '0')}-end`).join("\\n");
   const patches = Array.from({ length: 60 }, (_, index) => ({
-    expectedText: `placeholder-${index}`,
+    expectedText: `marker-${String(index).padStart(3, '0')}-end`,
     replacementText: "x".repeat(20_000)
   }));
   assert.throws(() => applyTextPatches(original, patches), /1 MiB/);
