@@ -13,8 +13,8 @@ app.get("/health", (_request, response) => {
   response.json({ status: "ok", service: "nexus-api", phase: 1 });
 });
 
-app.get("/api/projects", (_request, response) => {
-  response.json({ projects: projectStore.list() });
+app.get("/api/projects", async (_request, response) => {
+  response.json({ projects: await projectStore.list() });
 });
 
 app.post("/api/projects", async (request, response) => {
@@ -32,36 +32,40 @@ app.post("/api/projects", async (request, response) => {
       root,
       addedAt: new Date().toISOString(),
       lastIndexedAt: scan.scannedAt,
-      indexVersion: 1
+      indexVersion: 0
     };
-    projectStore.add(project);
-    projectStore.saveIndex(project.id, scan.files, scan.scannedAt);
-    response.status(201).json({ project, scan });
+    await projectStore.add(project);
+    await projectStore.saveIndex(project.id, scan.files, scan.scannedAt);
+    response.status(201).json({ project: await projectStore.get(project.id), scan });
   } catch (error) {
+    const mongoCode = typeof error === "object" && error !== null && "code" in error
+      ? (error as { code?: number }).code : undefined;
+    const duplicate = mongoCode === 11000;
     const message = error instanceof Error ? error.message : "Project registration failed";
-    const duplicate = message.includes("UNIQUE constraint failed");
-    response.status(duplicate ? 409 : 400).json({ error: duplicate ? "Project is already registered" : message });
+    response.status(duplicate ? 409 : 400).json({
+      error: duplicate ? "Project is already registered" : message
+    });
   }
 });
 
 app.post("/api/projects/:id/scan", async (request, response) => {
-  const project = projectStore.get(request.params.id);
+  const project = await projectStore.get(request.params.id);
   if (!project) {
     response.status(404).json({ error: "Project not found" });
     return;
   }
   try {
     const scan = await scanProject(project.root);
-    projectStore.saveIndex(project.id, scan.files, scan.scannedAt);
-    response.json({ project: projectStore.get(project.id), scan });
+    await projectStore.saveIndex(project.id, scan.files, scan.scannedAt);
+    response.json({ project: await projectStore.get(project.id), scan });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Project scan failed";
     response.status(400).json({ error: message });
   }
 });
 
-app.delete("/api/projects/:id", (request, response) => {
-  if (!projectStore.remove(request.params.id)) {
+app.delete("/api/projects/:id", async (request, response) => {
+  if (!await projectStore.remove(request.params.id)) {
     response.status(404).json({ error: "Project not found" });
     return;
   }
@@ -69,6 +73,18 @@ app.delete("/api/projects/:id", (request, response) => {
 });
 
 const port = Number(process.env.NEXUS_API_PORT ?? 3001);
-app.listen(port, "127.0.0.1", () => {
-  console.log(JSON.stringify({ event: "server.started", port, host: "127.0.0.1" }));
+
+async function start(): Promise<void> {
+  await projectStore.list();
+  app.listen(port, "127.0.0.1", () => {
+    console.log(JSON.stringify({ event: "server.started", port, host: "127.0.0.1" }));
+  });
+}
+
+start().catch((error: unknown) => {
+  console.error(JSON.stringify({
+    event: "server.start_failed",
+    message: error instanceof Error ? error.message : "Database connection failed"
+  }));
+  process.exitCode = 1;
 });
