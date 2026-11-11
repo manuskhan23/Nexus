@@ -11,6 +11,8 @@ import {
   rejectEditProposal,
   type EditChangeInput
 } from "../code-editing/edit-service.js";
+import { createTask, transitionTask, transitionTaskStep, type TaskStepInput } from "../tasks/task-service.js";
+import type { TaskStatus, TaskStepStatus } from "../storage/project-store.js";
 import { scanProject } from "../project-intelligence/scanner.js";
 import { watchProject, unwatchProject } from "../project-intelligence/watcher.js";
 import { createFileSnapshot, diffFileSnapshot, restoreFileSnapshot } from "../version-history/snapshot-service.js";
@@ -204,6 +206,90 @@ export function createApiApp(apiToken: string): express.Express {
       const message = error instanceof Error ? error.message : "Edit proposal could not be rejected";
       const status = message === "Project not found" || message === "Edit proposal not found" ? 404 : 409;
       response.status(status).json({ error: message });
+    }
+  });
+
+  app.get("/api/projects/:id/tasks", async (request, response) => {
+    const project = await projectStore.get(request.params.id);
+    if (!project) {
+      response.status(404).json({ error: "Project not found" });
+      return;
+    }
+    response.json({ tasks: await projectStore.listTasks(project.id) });
+  });
+
+  app.post("/api/projects/:id/tasks", async (request, response) => {
+    const title: unknown = request.body?.title;
+    const description: unknown = request.body?.description;
+    const priority: unknown = request.body?.priority;
+    const steps: unknown = request.body?.steps;
+    if (typeof title !== "string" || typeof description !== "string" ||
+        typeof priority !== "string" || !Array.isArray(steps)) {
+      response.status(400).json({ error: "Task title, description, priority and plan steps are required" });
+      return;
+    }
+    try {
+      response.status(201).json(await createTask(
+        request.params.id,
+        title,
+        description,
+        priority as "low" | "normal" | "high",
+        steps as TaskStepInput[]
+      ));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Task creation failed";
+      response.status(message === "Project not found" ? 404 : 400).json({ error: message });
+    }
+  });
+
+  app.get("/api/projects/:id/tasks/:taskId", async (request, response) => {
+    const task = await projectStore.getTask(request.params.id, request.params.taskId);
+    if (!task) {
+      response.status(404).json({ error: "Task not found" });
+      return;
+    }
+    response.json({ task });
+  });
+
+  app.put("/api/projects/:id/tasks/:taskId/status", async (request, response) => {
+    const status: unknown = request.body?.status;
+    const note: unknown = request.body?.note;
+    const allowed = ["pending", "planning", "awaiting_approval", "running", "paused", "failed", "completed", "cancelled"];
+    if (typeof status !== "string" || !allowed.includes(status) ||
+        (note !== undefined && typeof note !== "string")) {
+      response.status(400).json({ error: "Invalid task status update" });
+      return;
+    }
+    try {
+      response.json({ task: await transitionTask(request.params.id, request.params.taskId, status as TaskStatus, (note as string | undefined) ?? "") });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Task status update failed";
+      const missing = message === "Task not found";
+      response.status(missing ? 404 : 409).json({ error: message });
+    }
+  });
+
+  app.put("/api/projects/:id/tasks/:taskId/steps/:stepId", async (request, response) => {
+    const status: unknown = request.body?.status;
+    const result: unknown = request.body?.result;
+    const allowed = ["pending", "running", "completed", "failed", "skipped"];
+    if (typeof status !== "string" || !allowed.includes(status) ||
+        (result !== undefined && typeof result !== "string")) {
+      response.status(400).json({ error: "Invalid task step update" });
+      return;
+    }
+    try {
+      response.json({ task: await transitionTaskStep(
+        request.params.id,
+        request.params.taskId,
+        request.params.stepId,
+        status as TaskStepStatus,
+        (result as string | undefined) ?? ""
+      ) });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Task step update failed";
+      const missing = message === "Task not found" || message === "Task step not found";
+      response.status(missing ? 404 : 409).json({ error: message });
     }
   });
 
