@@ -26,6 +26,16 @@ const terminal = Object.freeze({
     ipcRenderer.invoke("terminal:cancel", projectId, processId, approvalGranted)
 });
 
+const memories = Object.freeze({
+  list: (projectId: string) => ipcRenderer.invoke("memories:list", projectId),
+  create: (projectId: string, scope: "user" | "project", title: string, content: string) =>
+    ipcRenderer.invoke("memories:create", projectId, scope, title, content),
+  update: (projectId: string, memoryId: string, input: unknown) =>
+    ipcRenderer.invoke("memories:update", projectId, memoryId, input),
+  remove: (projectId: string, memoryId: string) => ipcRenderer.invoke("memories:remove", projectId, memoryId),
+  export: (projectId: string) => ipcRenderer.invoke("memories:export", projectId)
+});
+
 const settings = Object.freeze({
   listProviders: () => ipcRenderer.invoke("settings:providers"),
   saveProviderCredential: (provider: "gemini" | "groq", credential: string | null) =>
@@ -73,4 +83,4 @@ const edits = Object.freeze({
   reject: (projectId: string, proposalId: string) => ipcRenderer.invoke("edits:reject", projectId, proposalId)
 });
 
-contextBridge.exposeInMainWorld("nexus", Object.freeze({ projects, snapshots, files, edits, tasks, terminal, browser, settings }));
+contextBridge.exposeInMainWorld("nexus", Object.freeze({ projects, snapshots, files, edits, tasks, terminal, browser, settings, memories }));
