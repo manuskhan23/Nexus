@@ -182,6 +182,7 @@ export async function prepareEditProposal(
   const id = randomUUID();
   const changes: EditProposalChange[] = [];
   const written: string[] = [];
+  let persisted = false;
   try {
     for (const item of staged) {
       if (!item.bytes) {
@@ -202,10 +203,13 @@ export async function prepareEditProposal(
       createdAt: new Date().toISOString()
     };
     await projectStore.createEditProposal(proposal);
+    persisted = true;
     return await getEditProposal(projectId, id);
   } catch (error) {
-    const directory = await proposalDirectory();
-    await Promise.all(written.map((key) => unlink(path.join(directory, key)).catch(() => undefined)));
+    if (!persisted) {
+      const directory = await proposalDirectory();
+      await Promise.all(written.map((key) => unlink(path.join(directory, key)).catch(() => undefined)));
+    }
     throw error;
   }
 }
