@@ -20,6 +20,13 @@ test("structured patches reject stale and ambiguous context", () => {
 test("structured patches enforce count and content limits", () => {
   assert.throws(() => applyTextPatches("", []), /between 1 and 100/);
   assert.throws(() => applyTextPatches("a", [
-    { expectedText: "a", replacementText: "x".repeat(1_000_001) }
-  ]), /1 MiB/);
+    { expectedText: "a", replacementText: "x".repeat(20_001) }
+  ]), /Invalid structured patch/);
+
+  const original = Array.from({ length: 60 }, (_, index) => `placeholder-${index}`).join("\\n");
+  const patches = Array.from({ length: 60 }, (_, index) => ({
+    expectedText: `placeholder-${index}`,
+    replacementText: "x".repeat(20_000)
+  }));
+  assert.throws(() => applyTextPatches(original, patches), /1 MiB/);
 });
