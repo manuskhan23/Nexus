@@ -103,7 +103,10 @@ export function createApiApp(apiToken: string): express.Express {
       response.status(404).json({ error: "Project not found" });
       return;
     }
-    response.json({ snapshots: await projectStore.listSnapshots(project.id, request.query.path as string | undefined) });
+    const snapshots = await projectStore.listSnapshots(project.id, request.query.path as string | undefined);
+    response.json({
+      snapshots: snapshots.map(({ blobKey: _blobKey, ...snapshot }) => snapshot)
+    });
   });
 
   app.post("/api/projects/:id/snapshots", async (request, response) => {
