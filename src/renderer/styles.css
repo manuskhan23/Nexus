@@ -70,3 +70,6 @@ footer { margin-top: auto; padding-top: 40px; }
 .edit-review { margin-top: 12px; padding: 12px; border: 1px solid #333; border-radius: 7px; background: #090909; }
 .edit-review > .project-heading > strong { overflow-wrap: anywhere; font-size: 12px; }
 .edit-review .actions { flex-wrap: wrap; }
+
+.edit-batch { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: 8px; padding: 10px; border: 1px solid #333; border-radius: 7px; }
+.edit-batch p { flex: 1 1 100%; margin: 0; overflow-wrap: anywhere; }
