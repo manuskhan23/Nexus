@@ -5,6 +5,7 @@ import {
   rejectEditProposal,
   type EditChangeInput
 } from "../code-editing/edit-service.js";
+import { projectStore } from "../storage/project-store.js";
 import { ToolRegistry } from "./tool-registry.js";
 
 function objectInput(input: unknown): Record<string, unknown> {
@@ -28,7 +29,7 @@ function proposalInput(input: unknown): { projectId: string; proposalId: string 
   return { projectId: value.projectId, proposalId: value.proposalId };
 }
 
-export const toolRegistry = new ToolRegistry();
+export const toolRegistry = new ToolRegistry((event) => projectStore.addToolExecution(event));
 
 toolRegistry.register({
   id: "files.read",
