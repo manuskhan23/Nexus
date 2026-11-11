@@ -9,6 +9,7 @@ import { projectStore } from "../storage/project-store.js";
 import { ToolRegistry } from "./tool-registry.js";
 import { registerTerminalTools } from "../terminal/register-tools.js";
 import { registerBrowserTools } from "../browser/register-tools.js";
+import { generateTaskPlan } from "../ai/task-planner.js";
 
 function objectInput(input: unknown): Record<string, unknown> {
   if (!input || typeof input !== "object" || Array.isArray(input)) throw new Error("Tool input must be an object");
@@ -88,3 +89,26 @@ toolRegistry.register({
 
 registerTerminalTools(toolRegistry);
 registerBrowserTools(toolRegistry);
+toolRegistry.register({
+  id: "tasks.plan",
+  name: "Generate task plan",
+  description: "Send a task request and bounded repository excerpts to a configured AI provider for a reviewable plan",
+  risk: "medium",
+  timeoutMs: 60_000,
+  validate(input) {
+    const value = objectInput(input);
+    if (typeof value.projectId !== "string" ||
+        (value.provider !== "gemini" && value.provider !== "groq") ||
+        typeof value.model !== "string" || typeof value.title !== "string" ||
+        typeof value.description !== "string") throw new Error("Invalid AI planning input");
+    return {
+      projectId: value.projectId,
+      provider: value.provider,
+      model: value.model,
+      title: value.title,
+      description: value.description
+    } as { projectId: string; provider: "gemini" | "groq"; model: string; title: string; description: string };
+  },
+  execute: (input) => generateTaskPlan(input.projectId, input.provider, input.model, input.title, input.description)
+});
+
