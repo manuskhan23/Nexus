@@ -103,7 +103,7 @@ export async function startCommand(
   if (request.shell === "powershell") {
     tempDirectory = await mkdtemp(path.join(os.tmpdir(), "nexus-terminal-"));
     const scriptPath = path.join(tempDirectory, "command.ps1");
-    const script = request.command + "\nif ($null -eq $LASTEXITCODE) { exit 0 } else { exit $LASTEXITCODE }\n";
+    const script = "\uFEFF" + request.command + "\nif ($null -eq $LASTEXITCODE) { exit 0 } else { exit $LASTEXITCODE }\n";
     await writeFile(scriptPath, script, { encoding: "utf8", flag: "wx" });
     executable = path.join(systemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
     args = ["-NoLogo", "-NoProfile", "-NonInteractive", "-File", scriptPath];
