@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { isIP } from "node:net";
 import { lookup } from "node:dns/promises";
 import { chromium, type Browser, type BrowserContext, type Page } from "playwright";
@@ -70,7 +71,7 @@ async function isPrivateHost(hostname: string): Promise<boolean> {
   }
 }
 
-function parseHttpUrl(raw: string): URL {
+export function validateBrowserUrl(raw: string): URL {
   if (typeof raw !== "string" || raw.length > 4096) throw new Error("Browser URL must be at most 4096 characters");
   let url: URL;
   try {
@@ -94,7 +95,16 @@ export async function startBrowserSession(projectId: string): Promise<{ sessionI
   if (!projectId || projectId.length > 64) throw new Error("Invalid project identifier");
   const existing = Array.from(sessions.values()).find((item) => item.projectId === projectId);
   if (existing) return { sessionId: existing.id };
-  const browser = await chromium.launch({ headless: true, timeout: 15_000 });
+  let browser: Browser;
+  try {
+    browser = await chromium.launch({ headless: true, timeout: 15_000 });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "";
+    if (message.includes("Executable") || message.includes("browserType.launch")) {
+      throw new Error("Playwright Chromium is not installed. Run npm run install:browsers and retry.");
+    }
+    throw error;
+  }
   try {
     const context = await browser.newContext({
       acceptDownloads: false,
@@ -102,7 +112,7 @@ export async function startBrowserSession(projectId: string): Promise<{ sessionI
       javaScriptEnabled: true
     });
     const session: BrowserSession = {
-      id: crypto.randomUUID(),
+      id: randomUUID(),
       projectId,
       browser,
       context,
@@ -140,7 +150,7 @@ export async function startBrowserSession(projectId: string): Promise<{ sessionI
 
 export async function navigateBrowser(projectId: string, sessionId: string, rawUrl: string): Promise<BrowserSnapshot> {
   const session = sessionFor(projectId, sessionId);
-  const url = parseHttpUrl(rawUrl);
+  const url = validateBrowserUrl(rawUrl);
   session.allowedLocalOrigin = await isPrivateHost(url.hostname) ? url.origin : null;
   await session.page.goto(url.href, { waitUntil: "domcontentloaded", timeout: NAVIGATION_TIMEOUT_MS });
   return readBrowserSnapshot(projectId, sessionId);
