@@ -6,6 +6,7 @@ import type { EditProposal, EditProposalChange, ProjectRecord } from "../storage
 import { projectStore } from "../storage/project-store.js";
 import { createFileSnapshot, diffFileSnapshot, restoreFileSnapshot } from "../version-history/snapshot-service.js";
 import { buildTextDiff } from "./diff.js";
+import { applyTextPatches, type TextPatch } from "./patch.js";
 import { normalizeEditPath, resolveProjectPath } from "./path-utils.js";
 
 const MAX_FILE_BYTES = 1_000_000;
@@ -28,6 +29,7 @@ export interface EditChangeInput {
   expectedHash: string | null;
   destinationPath?: string;
   content?: string;
+  patches?: TextPatch[];
 }
 
 export interface EditChangeView extends Omit<EditProposalChange, "contentBlobKey" | "contentHash"> {
@@ -177,10 +179,19 @@ export async function prepareEditProposal(
       });
       continue;
     }
-    if (input.action !== "write" || typeof input.content !== "string") {
-      throw new Error("Write changes require text content");
+    if (input.action !== "write") throw new Error("Unsupported edit operation");
+    if (input.content !== undefined && input.patches !== undefined) {
+      throw new Error("Choose either full text content or structured patches");
     }
-    const bytes = Buffer.from(input.content, "utf8");
+    let content: string;
+    if (typeof input.content === "string") {
+      content = input.content;
+    } else if (Array.isArray(input.patches) && current) {
+      content = applyTextPatches(current.bytes.toString("utf8"), input.patches);
+    } else {
+      throw new Error("Write changes require text content or patches against an existing file");
+    }
+    const bytes = Buffer.from(content, "utf8");
     if (bytes.includes(0) || bytes.length > MAX_FILE_BYTES) throw new Error("Edited content must be text no larger than 1 MiB");
     totalBytes += bytes.length;
     if (totalBytes > MAX_PROPOSAL_BYTES) throw new Error("Proposal content exceeds the 4 MiB limit");
