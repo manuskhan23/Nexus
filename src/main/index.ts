@@ -151,6 +151,69 @@ function registerIpc(): void {
     });
   });
 
+  ipcMain.handle("browser:start", async (event, id: unknown, approvalGranted: unknown) => {
+    assertTrustedRenderer(event);
+    if (typeof id !== "string" || id.length > 64 || approvalGranted !== true) {
+      throw new Error("Explicit approval and a valid project identifier are required");
+    }
+    return apiRequest(`/api/projects/${encodeURIComponent(id)}/browser/session`, {
+      method: "POST", body: JSON.stringify({ approved: true })
+    });
+  });
+
+  ipcMain.handle("browser:navigate", async (event, id: unknown, sessionId: unknown, url: unknown, approvalGranted: unknown) => {
+    assertTrustedRenderer(event);
+    if (typeof id !== "string" || id.length > 64 || typeof sessionId !== "string" ||
+        sessionId.length > 64 || typeof url !== "string" || url.length > 4096 || approvalGranted !== true) {
+      throw new Error("Explicit approval and valid browser navigation details are required");
+    }
+    return apiRequest(`/api/projects/${encodeURIComponent(id)}/browser/${encodeURIComponent(sessionId)}/navigate`, {
+      method: "POST", body: JSON.stringify({ url, approved: true })
+    });
+  });
+
+  ipcMain.handle("browser:snapshot", async (event, id: unknown, sessionId: unknown) => {
+    assertTrustedRenderer(event);
+    if (typeof id !== "string" || id.length > 64 || typeof sessionId !== "string" || sessionId.length > 64) {
+      throw new Error("Invalid browser session reference");
+    }
+    return apiRequest(`/api/projects/${encodeURIComponent(id)}/browser/${encodeURIComponent(sessionId)}/snapshot`);
+  });
+
+  ipcMain.handle("browser:click", async (event, id: unknown, sessionId: unknown, selector: unknown, approvalGranted: unknown) => {
+    assertTrustedRenderer(event);
+    if (typeof id !== "string" || id.length > 64 || typeof sessionId !== "string" || sessionId.length > 64 ||
+        typeof selector !== "string" || selector.length > 2000 || approvalGranted !== true) {
+      throw new Error("Explicit approval and valid browser click details are required");
+    }
+    return apiRequest(`/api/projects/${encodeURIComponent(id)}/browser/${encodeURIComponent(sessionId)}/click`, {
+      method: "POST", body: JSON.stringify({ selector, approved: true })
+    });
+  });
+
+  ipcMain.handle("browser:fill", async (event, id: unknown, sessionId: unknown, selector: unknown, value: unknown, approvalGranted: unknown) => {
+    assertTrustedRenderer(event);
+    if (typeof id !== "string" || id.length > 64 || typeof sessionId !== "string" || sessionId.length > 64 ||
+        typeof selector !== "string" || selector.length > 2000 || typeof value !== "string" || value.length > 2000 ||
+        approvalGranted !== true) {
+      throw new Error("Explicit approval and valid browser field details are required");
+    }
+    return apiRequest(`/api/projects/${encodeURIComponent(id)}/browser/${encodeURIComponent(sessionId)}/fill`, {
+      method: "POST", body: JSON.stringify({ selector, value, approved: true })
+    });
+  });
+
+  ipcMain.handle("browser:close", async (event, id: unknown, sessionId: unknown, approvalGranted: unknown) => {
+    assertTrustedRenderer(event);
+    if (typeof id !== "string" || id.length > 64 || typeof sessionId !== "string" || sessionId.length > 64 ||
+        approvalGranted !== true) {
+      throw new Error("Explicit approval and a valid browser session are required");
+    }
+    return apiRequest(`/api/projects/${encodeURIComponent(id)}/browser/${encodeURIComponent(sessionId)}/close`, {
+      method: "POST", body: JSON.stringify({ approved: true })
+    });
+  });
+
   ipcMain.handle("files:read", async (event, id: unknown, filePath: unknown) => {
     assertTrustedRenderer(event);
     if (typeof id !== "string" || id.length > 64 || typeof filePath !== "string" || filePath.length > 4096) {
