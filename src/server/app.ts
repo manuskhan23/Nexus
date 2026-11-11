@@ -1,8 +1,8 @@
-import { timingSafeEqual } from "node:crypto";
+import { randomUUID, timingSafeEqual } from "node:crypto";
 import { realpath } from "node:fs/promises";
 import express from "express";
 import path from "node:path";
-import { randomUUID } from "node:crypto";
+import { searchProjectContext } from "../context/context-service.js";
 import { scanProject } from "../project-intelligence/scanner.js";
 import { watchProject, unwatchProject } from "../project-intelligence/watcher.js";
 import { projectStore } from "../storage/project-store.js";
@@ -14,7 +14,7 @@ export function createApiApp(apiToken: string): express.Express {
   app.disable("x-powered-by");
   app.use(express.json({ limit: "32kb" }));
   app.get("/health", (_request, response) => {
-    response.json({ status: "ok", service: "nexus-api", phase: 1 });
+    response.json({ status: "ok", service: "nexus-api", phase: 2 });
   });
 
   app.use("/api", (request, response, next) => {
@@ -78,6 +78,21 @@ export function createApiApp(apiToken: string): express.Express {
     } catch (error) {
       const message = error instanceof Error ? error.message : "Project scan failed";
       response.status(400).json({ error: message });
+    }
+  });
+
+  app.post("/api/projects/:id/context", async (request, response) => {
+    const query: unknown = request.body?.query;
+    if (typeof query !== "string") {
+      response.status(400).json({ error: "A text query is required" });
+      return;
+    }
+    try {
+      response.json(await searchProjectContext(request.params.id, query));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Context search failed";
+      const status = message === "Project not found" ? 404 : 400;
+      response.status(status).json({ error: message });
     }
   });
 
