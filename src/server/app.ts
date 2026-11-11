@@ -3,6 +3,14 @@ import { realpath } from "node:fs/promises";
 import express from "express";
 import path from "node:path";
 import { searchProjectContext } from "../context/context-service.js";
+import {
+  applyEditProposal,
+  getEditProposal,
+  prepareEditProposal,
+  readProjectFile,
+  rejectEditProposal,
+  type EditChangeInput
+} from "../code-editing/edit-service.js";
 import { scanProject } from "../project-intelligence/scanner.js";
 import { watchProject, unwatchProject } from "../project-intelligence/watcher.js";
 import { createFileSnapshot, diffFileSnapshot, restoreFileSnapshot } from "../version-history/snapshot-service.js";
@@ -13,7 +21,7 @@ export function createApiApp(apiToken: string): express.Express {
 
   const app = express();
   app.disable("x-powered-by");
-  app.use(express.json({ limit: "32kb" }));
+  app.use(express.json({ limit: "5mb" }));
   app.get("/health", (_request, response) => {
     response.json({ status: "ok", service: "nexus-api", phase: 4 });
   });
@@ -93,6 +101,106 @@ export function createApiApp(apiToken: string): express.Express {
     } catch (error) {
       const message = error instanceof Error ? error.message : "Context search failed";
       const status = message === "Project not found" ? 404 : 400;
+      response.status(status).json({ error: message });
+    }
+  });
+
+  app.get("/api/projects/:id/files", async (request, response) => {
+    const filePath = request.query.path;
+    if (typeof filePath !== "string" || filePath.length > 4096) {
+      response.status(400).json({ error: "A project-relative file path is required" });
+      return;
+    }
+    try {
+      response.json(await readProjectFile(request.params.id, filePath));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "File read failed";
+      const status = message === "Project not found" ? 404 : 400;
+      response.status(status).json({ error: message });
+    }
+  });
+
+  app.get("/api/projects/:id/edit-proposals", async (request, response) => {
+    const project = await projectStore.get(request.params.id);
+    if (!project) {
+      response.status(404).json({ error: "Project not found" });
+      return;
+    }
+    const proposals = await projectStore.listEditProposals(project.id);
+    response.json({
+      proposals: proposals.map((proposal) => ({
+        ...proposal,
+        changes: proposal.changes.map(({ contentBlobKey: _blobKey, contentHash: _hash, ...change }) => change)
+      }))
+    });
+  });
+
+  app.post("/api/projects/:id/edit-proposals", async (request, response) => {
+    const title: unknown = request.body?.title;
+    const rawChanges: unknown = request.body?.changes;
+    if (typeof title !== "string" || title.length > 160 || !Array.isArray(rawChanges) ||
+        rawChanges.length === 0 || rawChanges.length > 20) {
+      response.status(400).json({ error: "A title and between 1 and 20 changes are required" });
+      return;
+    }
+    const changes: EditChangeInput[] = [];
+    for (const raw of rawChanges) {
+      if (!raw || typeof raw !== "object") {
+        response.status(400).json({ error: "Each change must be an object" });
+        return;
+      }
+      const change = raw as Record<string, unknown>;
+      if (typeof change.path !== "string" || change.path.length > 4096 ||
+          (change.action !== "write" && change.action !== "delete") ||
+          (change.expectedHash !== null && typeof change.expectedHash !== "string") ||
+          (change.content !== undefined && typeof change.content !== "string")) {
+        response.status(400).json({ error: "Invalid file change" });
+        return;
+      }
+      changes.push({
+        path: change.path,
+        action: change.action,
+        expectedHash: change.expectedHash as string | null,
+        ...(typeof change.content === "string" ? { content: change.content } : {})
+      });
+    }
+    try {
+      response.status(201).json(await prepareEditProposal(request.params.id, title, changes));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Edit proposal creation failed";
+      const status = message === "Project not found" ? 404 :
+        message.startsWith("File changed") ? 409 : 400;
+      response.status(status).json({ error: message });
+    }
+  });
+
+  app.get("/api/projects/:id/edit-proposals/:proposalId", async (request, response) => {
+    try {
+      response.json(await getEditProposal(request.params.id, request.params.proposalId));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Edit proposal lookup failed";
+      const status = message === "Project not found" || message === "Edit proposal not found" ? 404 : 400;
+      response.status(status).json({ error: message });
+    }
+  });
+
+  app.post("/api/projects/:id/edit-proposals/:proposalId/apply", async (request, response) => {
+    try {
+      response.json(await applyEditProposal(request.params.id, request.params.proposalId));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Edit proposal could not be applied";
+      const status = message === "Project not found" || message === "Edit proposal not found" ? 404 : 409;
+      response.status(status).json({ error: message });
+    }
+  });
+
+  app.post("/api/projects/:id/edit-proposals/:proposalId/reject", async (request, response) => {
+    try {
+      await rejectEditProposal(request.params.id, request.params.proposalId);
+      response.status(204).end();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Edit proposal could not be rejected";
+      const status = message === "Project not found" || message === "Edit proposal not found" ? 404 : 409;
       response.status(status).json({ error: message });
     }
   });
