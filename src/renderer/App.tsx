@@ -105,6 +105,12 @@ interface TaskStep {
   dependencies: string[];
   status: "pending" | "running" | "completed" | "failed" | "skipped";
 }
+interface TaskEvent {
+  id: string;
+  at: string;
+  type: string;
+  message: string;
+}
 interface Task {
   id: string;
   projectId: string;
@@ -116,6 +122,7 @@ interface Task {
   progress: number;
   currentStepId: string | null;
   error?: string;
+  events: TaskEvent[];
 }
 interface TaskList { tasks: Task[] }
 
@@ -468,12 +475,13 @@ export function App() {
                       <strong>{task.title}</strong>
                       <span className="index-badge">{task.status.toUpperCase()} · {task.progress}%</span>
                     </div>
-                    <p className="muted small">{task.description}</p>
+                    <p className="muted small">{task.priority.toUpperCase()} PRIORITY · {task.description}</p>
                     <progress value={task.progress} max="100" aria-label="Task progress" />
                     <ol className="task-steps">
                       {task.steps.map((step) => (
                         <li key={step.id}>
                           <span>{step.title} · {step.status}{step.dependencies.length ? " · depends on earlier steps" : ""}</span>
+                          {step.description && <small className="muted">{step.description}</small>}
                           {task.status === "running" && step.status === "pending" &&
                             <button className="text-button" onClick={() => void run(() => updateTaskStep(project, task, step, "running"))} disabled={busy}>Start</button>}
                           {task.status === "running" && step.status === "running" &&
@@ -490,6 +498,12 @@ export function App() {
                       {task.status === "running" && task.progress === 100 && <button className="text-button" onClick={() => void run(() => updateTask(project, task, "completed"))} disabled={busy}>Mark complete</button>}
                       {!["completed", "cancelled"].includes(task.status) && <button className="text-button" onClick={() => void run(() => updateTask(project, task, "cancelled"))} disabled={busy}>Cancel</button>}
                     </div>
+                    <details className="task-events">
+                      <summary>Execution history ({task.events.length})</summary>
+                      <ul>{task.events.slice(-10).reverse().map((event) => (
+                        <li key={event.id}><time>{new Date(event.at).toLocaleString()}</time> · {event.message}</li>
+                      ))}</ul>
+                    </details>
                     {task.error && <p className="message error">{task.error}</p>}
                   </article>
                 ))}
