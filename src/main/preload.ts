@@ -17,4 +17,17 @@ const snapshots = Object.freeze({
     ipcRenderer.invoke("snapshots:restore", projectId, snapshotId, expectedCurrentHash)
 });
 
-contextBridge.exposeInMainWorld("nexus", Object.freeze({ projects, snapshots }));
+const files = Object.freeze({
+  read: (projectId: string, filePath: string) => ipcRenderer.invoke("files:read", projectId, filePath)
+});
+
+const edits = Object.freeze({
+  list: (projectId: string) => ipcRenderer.invoke("edits:list", projectId),
+  propose: (projectId: string, title: string, changes: unknown[]) =>
+    ipcRenderer.invoke("edits:propose", projectId, title, changes),
+  get: (projectId: string, proposalId: string) => ipcRenderer.invoke("edits:get", projectId, proposalId),
+  apply: (projectId: string, proposalId: string) => ipcRenderer.invoke("edits:apply", projectId, proposalId),
+  reject: (projectId: string, proposalId: string) => ipcRenderer.invoke("edits:reject", projectId, proposalId)
+});
+
+contextBridge.exposeInMainWorld("nexus", Object.freeze({ projects, snapshots, files, edits }));
