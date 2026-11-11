@@ -48,6 +48,7 @@ declare global {
       tasks: {
         list(projectId: string): Promise<unknown>;
         create(projectId: string, input: unknown): Promise<unknown>;
+        plan(projectId: string, input: unknown, approvalGranted: boolean): Promise<unknown>;
         setStatus(projectId: string, taskId: string, status: string, note?: string): Promise<unknown>;
         setStep(projectId: string, taskId: string, stepId: string, status: string, result?: string): Promise<unknown>;
       };
