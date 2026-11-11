@@ -229,6 +229,61 @@ export function createApiApp(apiToken: string): express.Express {
     }
   });
 
+  app.get("/api/projects/:id/terminal/processes", async (request, response) => {
+    try {
+      const execution = await toolRegistry.execute("terminal.list", { projectId: request.params.id },
+        { projectId: request.params.id, approved: false });
+      response.json({ processIds: execution.result });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Process listing failed";
+      response.status(message === "Project not found" ? 404 : 400).json({ error: message });
+    }
+  });
+
+  app.post("/api/projects/:id/terminal/commands", async (request, response) => {
+    const { command, shell, cwd, timeoutMs, approved } = request.body ?? {};
+    if (approved !== true) {
+      response.status(403).json({ error: "Explicit approval is required to run terminal commands" });
+      return;
+    }
+    if (typeof command !== "string" || command.length > 16_000 ||
+        (shell !== "powershell" && shell !== "cmd") ||
+        (cwd !== undefined && (typeof cwd !== "string" || cwd.length > 4096)) ||
+        (timeoutMs !== undefined && (typeof timeoutMs !== "number" || !Number.isFinite(timeoutMs)))) {
+      response.status(400).json({ error: "Invalid terminal command request" });
+      return;
+    }
+    try {
+      const execution = await toolRegistry.execute("terminal.run", {
+        projectId: request.params.id, command, shell,
+        ...(typeof cwd === "string" ? { cwd } : {}),
+        ...(typeof timeoutMs === "number" ? { timeoutMs } : {})
+      }, { projectId: request.params.id, approved: true });
+      response.json(execution.result);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Terminal command failed";
+      const status = message === "Project not found" ? 404 :
+        message.startsWith("Explicit approval") ? 403 : 400;
+      response.status(status).json({ error: message });
+    }
+  });
+
+  app.post("/api/projects/:id/terminal/processes/:processId/cancel", async (request, response) => {
+    if (request.body?.approved !== true) {
+      response.status(403).json({ error: "Explicit approval is required to stop a process" });
+      return;
+    }
+    try {
+      const execution = await toolRegistry.execute("terminal.cancel", {
+        projectId: request.params.id, processId: request.params.processId
+      }, { projectId: request.params.id, approved: true });
+      response.json({ stopped: execution.result });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Process could not be stopped";
+      response.status(400).json({ error: message });
+    }
+  });
+
   app.get("/api/projects/:id/tasks", async (request, response) => {
     const project = await projectStore.get(request.params.id);
     if (!project) {
