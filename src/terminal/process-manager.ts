@@ -1,7 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { execFile, spawn, type ChildProcess } from "node:child_process";
-import { realpath } from "node:fs/promises";
+import { mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
+import os from "node:os";
 import { promisify } from "node:util";
 import { projectStore, type ProjectRecord } from "../storage/project-store.js";
 
@@ -38,6 +39,7 @@ interface OwnedProcess extends CommandSnapshot {
   child: ChildProcess;
   startedAtMs: number;
   timer: ReturnType<typeof setTimeout>;
+  tempDirectory?: string;
 }
 
 const owned = new Map<string, OwnedProcess>();
@@ -94,13 +96,21 @@ export async function startCommand(
   const cwd = await resolveWorkingDirectory(project.root, request.cwd);
   const timeoutMs = Math.max(1_000, Math.min(request.timeoutMs ?? 30_000, MAX_TIMEOUT_MS));
   const processId = randomUUID();
-  const args = request.shell === "powershell"
-    ? ["-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(request.command + "\nif ($null -eq $LASTEXITCODE) { exit 0 } else { exit $LASTEXITCODE }", "utf16le").toString("base64")]
-    : ["/d", "/s", "/c", request.command];
   const systemRoot = process.env.SystemRoot || "C:\\Windows";
-  const executable = request.shell === "powershell"
-    ? path.join(systemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe")
-    : path.join(systemRoot, "System32", "cmd.exe");
+  let tempDirectory: string | undefined;
+  let executable: string;
+  let args: string[];
+  if (request.shell === "powershell") {
+    tempDirectory = await mkdtemp(path.join(os.tmpdir(), "nexus-terminal-"));
+    const scriptPath = path.join(tempDirectory, "command.ps1");
+    const script = request.command + "\nif ($null -eq $LASTEXITCODE) { exit 0 } else { exit $LASTEXITCODE }\n";
+    await writeFile(scriptPath, script, { encoding: "utf8", flag: "wx" });
+    executable = path.join(systemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
+    args = ["-NoLogo", "-NoProfile", "-NonInteractive", "-File", scriptPath];
+  } else {
+    executable = path.join(systemRoot, "System32", "cmd.exe");
+    args = ["/d", "/s", "/c", request.command];
+  }
   const child = spawn(executable, args, {
     cwd, env: boundedEnv(), windowsHide: true, stdio: ["ignore", "pipe", "pipe"]
   });
@@ -117,6 +127,7 @@ export async function startCommand(
     timedOut: false,
     outputTruncated: false,
     startedAtMs,
+    ...(tempDirectory ? { tempDirectory } : {}),
     timer: setTimeout(() => {
       item.timedOut = true;
       terminateTree(child);
@@ -147,6 +158,7 @@ export async function startCommand(
     item.stderr = (item.stderr + "\n" + error.message).slice(0, MAX_OUTPUT_BYTES);
     item.durationMs = Date.now() - startedAtMs;
     clearTimeout(item.timer);
+    if (item.tempDirectory) void rm(item.tempDirectory, { recursive: true, force: true }).catch(() => undefined);
     pruneHistory();
   });
   const markExited = (code: number | null) => {
