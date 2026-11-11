@@ -151,7 +151,8 @@ export function createApiApp(apiToken: string): express.Express {
       }
       const change = raw as Record<string, unknown>;
       if (typeof change.path !== "string" || change.path.length > 4096 ||
-          (change.action !== "write" && change.action !== "delete") ||
+          (change.action !== "write" && change.action !== "delete" && change.action !== "move") ||
+          (change.action === "move" && (typeof change.destinationPath !== "string" || change.destinationPath.length > 4096)) ||
           (change.expectedHash !== null && typeof change.expectedHash !== "string") ||
           (change.content !== undefined && typeof change.content !== "string")) {
         response.status(400).json({ error: "Invalid file change" });
@@ -161,6 +162,7 @@ export function createApiApp(apiToken: string): express.Express {
         path: change.path,
         action: change.action,
         expectedHash: change.expectedHash as string | null,
+        ...(typeof change.destinationPath === "string" ? { destinationPath: change.destinationPath } : {}),
         ...(typeof change.content === "string" ? { content: change.content } : {})
       });
     }
