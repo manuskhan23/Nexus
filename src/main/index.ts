@@ -92,6 +92,14 @@ function registerIpc(): void {
     return apiRequest(`/api/projects/${encodeURIComponent(id)}/terminal/processes`);
   });
 
+  ipcMain.handle("terminal:get", async (event, id: unknown, processId: unknown) => {
+    assertTrustedRenderer(event);
+    if (typeof id !== "string" || id.length > 64 || typeof processId !== "string" || processId.length > 64) {
+      throw new Error("Invalid process reference");
+    }
+    return apiRequest(`/api/projects/${encodeURIComponent(id)}/terminal/processes/${encodeURIComponent(processId)}`);
+  });
+
   ipcMain.handle("terminal:cancel", async (event, id: unknown, processId: unknown, approvalGranted: unknown) => {
     assertTrustedRenderer(event);
     if (typeof id !== "string" || id.length > 64 || typeof processId !== "string" || processId.length > 64 ||
