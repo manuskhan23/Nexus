@@ -548,10 +548,13 @@ export function App() {
                   </div>
                 </div>
                 {terminalResults[project.id] && (
+                  <>
+                  <p className="muted small">Process {terminalResults[project.id].processId} · {terminalResults[project.id].status.toUpperCase()}{terminalResults[project.id].exitCode !== null ? ` · exit ${terminalResults[project.id].exitCode}` : ""}</p>
                   <pre className="diff-view" aria-live="polite">{terminalResults[project.id].stdout}{terminalResults[project.id].stderr ? `\n${terminalResults[project.id].stderr}` : ""}
                     {terminalResults[project.id].outputTruncated ? "\n… output truncated at 128 KiB" : ""}
                     {terminalResults[project.id].timedOut ? "\n… command timed out" : ""}
                   </pre>
+                  </>
                 )}
                 {(terminalProcesses[project.id] ?? []).map((process) => (
                   <div className="snapshot-row" key={process.processId}>
