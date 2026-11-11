@@ -20,7 +20,7 @@ async function waitForProcess(projectId: string, processId: string) {
     result = getOwnedProcess(projectId, processId);
   }
   assert.ok(result, "process state should be available");
-  assert.notEqual(result.status, "running", "process should finish before the test deadline");
+  assert.notEqual(result.status, "running", `process should finish before the test deadline: ${JSON.stringify(result)}`);
   return result;
 }
 
