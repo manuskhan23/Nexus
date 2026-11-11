@@ -49,7 +49,7 @@ export async function generateTaskPlan(
   if (!title.trim() || title.length > 160 || !description.trim() || description.length > 4000) {
     throw new Error("A task title and description are required");
   }
-  const context = await searchProjectContext(projectId, `${title}\n${description}`);
+  const context = await searchProjectContext(projectId, `${title}\n${description}`.slice(0, 512));
   const excerpts = context.sources.map((source) =>
     `FILE: ${source.path} (lines ${source.startLine}-${source.endLine})\n${source.excerpt}`
   ).join("\n\n").slice(0, MAX_PLAN_CONTEXT_CHARS);
