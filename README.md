@@ -30,11 +30,12 @@ The repository was empty at the start. The stack is Electron main/preload, a Rea
 ## Status
 
 - Phase 1: bounded metadata scanning, MongoDB project/file records, project routes, watcher updates, and the Electron/React project workspace are implemented. Ignore semantics and watcher recovery still need more work.
-- Phase 2: bounded keyword context retrieval is in progress. Search returns up to 8 source excerpts with file paths, line ranges, hashes, match reasons, and truncation status. It reads no more than 750 candidate files / 64 MiB and returns at most 16,000 excerpt characters.
+- Phase 2: bounded keyword context retrieval is implemented. Search returns up to 8 source excerpts with file paths, line ranges, hashes, match reasons, and truncation status. It reads no more than 750 candidate files / 64 MiB and returns at most 16,000 excerpt characters.
 - Source excerpts are labeled as untrusted repository content; the search service does not generate conclusions or execute project instructions.
 - Semantic retrieval, conversation context, memory retrieval, and provider summarization are not implemented.
-- Phases 3–16 remain open. The product is not production-ready.
+- Phase 4: local file snapshots, bounded line comparison, and hash-checked restore are implemented. Snapshots exclude secret-looking paths, binary files, symlinks, and files larger than 5 MiB; restore preserves a safety snapshot first.
+- Phase 3 and Phases 5–16 remain open. The product is not production-ready.
 
 Set MONGODB_URI in the environment available to the Electron process. MONGODB_DATABASE is optional and defaults to nexus. Never commit credentials.
 
-Removing a project deletes its registry/index records but leaves project files untouched. The scanner stores file metadata and hashes; context search reads bounded excerpts directly from project files on demand.
+Removing a project deletes its registry/index records but leaves project files untouched. Snapshot history remains in MongoDB and snapshot blobs remain under the app data directory. The scanner stores file metadata and hashes; context search reads bounded excerpts directly from project files on demand.
