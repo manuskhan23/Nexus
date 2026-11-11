@@ -1,7 +1,4 @@
-import Database from "better-sqlite3";
-import { mkdirSync } from "node:fs";
-import os from "node:os";
-import path from "node:path";
+import { MongoClient, type Collection, type Db, type WithId } from "mongodb";
 import type { IndexedFile } from "../project-intelligence/scanner.js";
 
 export interface ProjectRecord {
@@ -13,75 +10,92 @@ export interface ProjectRecord {
   indexVersion: number;
 }
 
-function openDatabase(): Database.Database {
-  const dataDirectory = process.env.NEXUS_DATA_DIR ?? path.join(os.homedir(), ".nexus-ai");
-  mkdirSync(dataDirectory, { recursive: true, mode: 0o700 });
-  const database = new Database(path.join(dataDirectory, "nexus.sqlite"));
-  database.pragma("journal_mode = WAL");
-  database.pragma("foreign_keys = ON");
-  database.exec(`
-    CREATE TABLE IF NOT EXISTS projects (
-      id TEXT PRIMARY KEY,
-      name TEXT NOT NULL,
-      root TEXT NOT NULL UNIQUE,
-      added_at TEXT NOT NULL,
-      last_indexed_at TEXT,
-      index_version INTEGER NOT NULL DEFAULT 0
-    );
-    CREATE TABLE IF NOT EXISTS project_files (
-      project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-      relative_path TEXT NOT NULL,
-      size INTEGER NOT NULL,
-      modified_at TEXT NOT NULL,
-      sha256 TEXT NOT NULL,
-      language TEXT NOT NULL,
-      PRIMARY KEY (project_id, relative_path)
-    );
-    CREATE INDEX IF NOT EXISTS idx_project_files_language
-      ON project_files(project_id, language);
-  `);
-  return database;
+interface StoredProject extends ProjectRecord {}
+interface StoredFile extends IndexedFile {
+  projectId: string;
 }
 
-const db = openDatabase();
-const statements = {
-  list: db.prepare(`SELECT id, name, root, added_at AS addedAt,
-    last_indexed_at AS lastIndexedAt, index_version AS indexVersion
-    FROM projects ORDER BY added_at`),
-  get: db.prepare(`SELECT id, name, root, added_at AS addedAt,
-    last_indexed_at AS lastIndexedAt, index_version AS indexVersion
-    FROM projects WHERE id = ?`),
-  add: db.prepare(`INSERT INTO projects (id, name, root, added_at)
-    VALUES (@id, @name, @root, @addedAt)`),
-  delete: db.prepare("DELETE FROM projects WHERE id = ?"),
-  replaceIndex: db.prepare("DELETE FROM project_files WHERE project_id = ?"),
-  addFile: db.prepare(`INSERT INTO project_files
-    (project_id, relative_path, size, modified_at, sha256, language)
-    VALUES (@projectId, @path, @size, @modifiedAt, @sha256, @language)`),
-  updateIndexedAt: db.prepare(`UPDATE projects
-    SET last_indexed_at = ?, index_version = index_version + 1 WHERE id = ?`)
-};
+let client: MongoClient | undefined;
+let database: Db | undefined;
+let connectPromise: Promise<void> | undefined;
 
-const saveIndexTransaction = db.transaction((projectId: string, files: IndexedFile[], indexedAt: string) => {
-  statements.replaceIndex.run(projectId);
-  for (const file of files) statements.addFile.run({ projectId, ...file });
-  statements.updateIndexedAt.run(indexedAt, projectId);
-});
+async function connect(): Promise<void> {
+  if (database) return;
+  if (!connectPromise) {
+    connectPromise = (async () => {
+      const uri = process.env.MONGODB_URI;
+      if (!uri) throw new Error("MONGODB_URI must be configured before using project storage");
+      client = new MongoClient(uri, { serverSelectionTimeoutMS: 5000 });
+      await client.connect();
+      database = client.db(process.env.MONGODB_DATABASE || "nexus");
+      await Promise.all([
+        database.collection<StoredProject>("projects").createIndex({ id: 1 }, { unique: true }),
+        database.collection<StoredProject>("projects").createIndex({ root: 1 }, { unique: true }),
+        database.collection<StoredFile>("project_files").createIndex({ projectId: 1, path: 1 }, { unique: true }),
+        database.collection<StoredFile>("project_files").createIndex({ projectId: 1, language: 1 })
+      ]);
+    })();
+  }
+  try {
+    await connectPromise;
+  } catch (error) {
+    connectPromise = undefined;
+    client = undefined;
+    database = undefined;
+    throw error;
+  }
+}
+
+async function collections(): Promise<{ projects: Collection<StoredProject>; files: Collection<StoredFile> }> {
+  await connect();
+  return {
+    projects: database!.collection<StoredProject>("projects"),
+    files: database!.collection<StoredFile>("project_files")
+  };
+}
+
+function publicProject(document: WithId<StoredProject>): ProjectRecord {
+  const { _id: _ignored, ...project } = document;
+  return project;
+}
 
 export const projectStore = {
-  list(): ProjectRecord[] {
-    return statements.list.all() as ProjectRecord[];
+  async list(): Promise<ProjectRecord[]> {
+    const { projects } = await collections();
+    const documents = await projects.find({}, { projection: { _id: 0 } }).sort({ addedAt: 1 }).toArray();
+    return documents;
   },
-  get(id: string): ProjectRecord | undefined {
-    return statements.get.get(id) as ProjectRecord | undefined;
+  async get(id: string): Promise<ProjectRecord | undefined> {
+    const { projects } = await collections();
+    const document = await projects.findOne({ id });
+    return document ? publicProject(document) : undefined;
   },
-  add(project: ProjectRecord): void {
-    statements.add.run(project);
+  async add(project: ProjectRecord): Promise<void> {
+    const { projects } = await collections();
+    await projects.insertOne(project);
   },
-  remove(id: string): boolean {
-    return statements.delete.run(id).changes === 1;
+  async remove(id: string): Promise<boolean> {
+    const { projects, files } = await collections();
+    const result = await projects.deleteOne({ id });
+    if (result.deletedCount === 0) return false;
+    await files.deleteMany({ projectId: id });
+    return true;
   },
-  saveIndex(id: string, files: IndexedFile[], indexedAt: string): void {
-    saveIndexTransaction(id, files, indexedAt);
+  async saveIndex(id: string, indexedFiles: IndexedFile[], indexedAt: string): Promise<void> {
+    const { projects, files } = await collections();
+    await files.deleteMany({ projectId: id });
+    if (indexedFiles.length > 0) {
+      await files.insertMany(indexedFiles.map((file) => ({ ...file, projectId: id })), { ordered: true });
+    }
+    await projects.updateOne(
+      { id },
+      { $set: { lastIndexedAt: indexedAt }, $inc: { indexVersion: 1 } }
+    );
+  },
+  async close(): Promise<void> {
+    await client?.close();
+    client = undefined;
+    database = undefined;
+    connectPromise = undefined;
   }
 };
