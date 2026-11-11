@@ -8,4 +8,13 @@ const projects = Object.freeze({
   remove: (id: string) => ipcRenderer.invoke("projects:remove", id)
 });
 
-contextBridge.exposeInMainWorld("nexus", Object.freeze({ projects }));
+const snapshots = Object.freeze({
+  list: (projectId: string, filePath?: string) => ipcRenderer.invoke("snapshots:list", projectId, filePath),
+  create: (projectId: string, filePath: string, reason?: string) =>
+    ipcRenderer.invoke("snapshots:create", projectId, filePath, reason),
+  diff: (projectId: string, snapshotId: string) => ipcRenderer.invoke("snapshots:diff", projectId, snapshotId),
+  restore: (projectId: string, snapshotId: string, expectedCurrentHash: string | null) =>
+    ipcRenderer.invoke("snapshots:restore", projectId, snapshotId, expectedCurrentHash)
+});
+
+contextBridge.exposeInMainWorld("nexus", Object.freeze({ projects, snapshots }));
