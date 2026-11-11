@@ -353,7 +353,7 @@ export function App() {
       }
       const accepted = window.confirm(`Apply “${proposal.title}” to ${proposal.changes.length} file(s)? A recovery snapshot will be saved first.`);
       if (!accepted) return;
-      await window.nexus.edits.apply(project.id, proposal.id);
+      await window.nexus.edits.apply(project.id, proposal.id, true);
       const [list, updated] = await Promise.all([
         window.nexus.edits.list(project.id) as Promise<EditProposalList>,
         window.nexus.edits.get(project.id, proposal.id) as Promise<EditProposal>
