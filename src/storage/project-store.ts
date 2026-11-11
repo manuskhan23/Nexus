@@ -24,8 +24,9 @@ export interface FileSnapshot {
 
 export interface EditProposalChange {
   path: string;
-  action: "write" | "delete";
+  action: "write" | "delete" | "move";
   expectedHash: string | null;
+  destinationPath?: string;
   contentBlobKey?: string;
   contentHash?: string;
   size: number;
