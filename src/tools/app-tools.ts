@@ -44,7 +44,7 @@ toolRegistry.register({
   id: "edits.prepare",
   name: "Prepare edit proposal",
   description: "Stage a bounded file change for user review",
-  risk: "medium",
+  risk: "low",
   timeoutMs: 30_000,
   validate(input) {
     const value = objectInput(input);
