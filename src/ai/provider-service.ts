@@ -69,11 +69,17 @@ export async function generateText(
       });
     }
     if (!response.ok) {
-      const errorText = await response.text().catch(() => "");
-      const safeText = errorText.replace(/(?:key|token|secret)\s*[:=]\s*[^\s,"]+/gi, "$1=[redacted]").slice(0, 300);
-      throw new Error(`${provider} request failed (HTTP ${response.status})${safeText ? `: ${safeText}` : ""}`);
+      // Provider error bodies can echo request metadata; never include them in surfaced errors.
+      throw new Error(`${provider} request failed (HTTP ${response.status})`);
     }
-    const payload: unknown = await response.json();
+    const responseText = await response.text();
+    if (Buffer.byteLength(responseText, "utf8") > 256_000) throw new Error("AI response payload exceeded the 256000 byte limit");
+    let payload: unknown;
+    try {
+      payload = JSON.parse(responseText) as unknown;
+    } catch {
+      throw new Error(`${provider} returned an invalid response`);
+    }
     const text = provider === "gemini"
       ? extractGeminiText(payload)
       : extractGroqText(payload);
