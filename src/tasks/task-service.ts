@@ -58,7 +58,7 @@ export function canTransitionTask(current: TaskStatus, next: TaskStatus): boolea
   return TASK_STATUSES.has(current) && TASK_STATUSES.has(next) && TRANSITIONS[current].includes(next);
 }
 
-function redactSecrets(value: string): string {
+export function redactSecrets(value: string): string {
   return value
     .replace(/((?:password|passwd|secret|api[_-]?key|access[_-]?token|refresh[_-]?token)\s*[:=]\s*)[^\s,;]+/gi, "$1[redacted]")
     .replace(/mongodb(?:\+srv)?:\/\/[^@\s]+@/gi, "mongodb://[redacted]@")
