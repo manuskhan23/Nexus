@@ -22,11 +22,32 @@ export interface FileSnapshot {
   blobKey: string;
 }
 
+export interface EditProposalChange {
+  path: string;
+  action: "write" | "delete";
+  expectedHash: string | null;
+  contentBlobKey?: string;
+  contentHash?: string;
+  size: number;
+}
+
+export interface EditProposal {
+  id: string;
+  projectId: string;
+  title: string;
+  status: "pending" | "applying" | "applied" | "rejected" | "failed";
+  changes: EditProposalChange[];
+  createdAt: string;
+  completedAt?: string;
+  failureMessage?: string;
+}
+
 interface StoredProject extends ProjectRecord {}
 interface StoredFile extends IndexedFile {
   projectId: string;
 }
 interface StoredSnapshot extends FileSnapshot {}
+interface StoredEditProposal extends EditProposal {}
 
 let client: MongoClient | undefined;
 let database: Db | undefined;
@@ -47,7 +68,9 @@ async function connect(): Promise<void> {
         database.collection<StoredFile>("project_files").createIndex({ projectId: 1, path: 1 }, { unique: true }),
         database.collection<StoredFile>("project_files").createIndex({ projectId: 1, language: 1 }),
         database.collection<StoredSnapshot>("file_snapshots").createIndex({ id: 1 }, { unique: true }),
-        database.collection<StoredSnapshot>("file_snapshots").createIndex({ projectId: 1, path: 1, createdAt: -1 })
+        database.collection<StoredSnapshot>("file_snapshots").createIndex({ projectId: 1, path: 1, createdAt: -1 }),
+        database.collection<StoredEditProposal>("edit_proposals").createIndex({ id: 1 }, { unique: true }),
+        database.collection<StoredEditProposal>("edit_proposals").createIndex({ projectId: 1, createdAt: -1 })
       ]);
     })();
   }
@@ -66,12 +89,14 @@ async function collections(): Promise<{
   projects: Collection<StoredProject>;
   files: Collection<StoredFile>;
   snapshots: Collection<StoredSnapshot>;
+  editProposals: Collection<StoredEditProposal>;
 }> {
   await connect();
   return {
     projects: database!.collection<StoredProject>("projects"),
     files: database!.collection<StoredFile>("project_files"),
-    snapshots: database!.collection<StoredSnapshot>("file_snapshots")
+    snapshots: database!.collection<StoredSnapshot>("file_snapshots"),
+    editProposals: database!.collection<StoredEditProposal>("edit_proposals")
   };
 }
 
@@ -142,6 +167,44 @@ export const projectStore = {
     const { snapshots } = await collections();
     const filter = relativePath ? { projectId, path: relativePath } : { projectId };
     return snapshots.find(filter, { projection: { _id: 0 } }).sort({ createdAt: -1 }).limit(100).toArray();
+  },
+  async createEditProposal(proposal: EditProposal): Promise<void> {
+    const { editProposals } = await collections();
+    await editProposals.insertOne(proposal);
+  },
+  async getEditProposal(projectId: string, id: string): Promise<EditProposal | undefined> {
+    const { editProposals } = await collections();
+    return (await editProposals.findOne({ projectId, id }, { projection: { _id: 0 } })) ?? undefined;
+  },
+  async listEditProposals(projectId: string): Promise<EditProposal[]> {
+    const { editProposals } = await collections();
+    return editProposals.find({ projectId }, { projection: { _id: 0 } })
+      .sort({ createdAt: -1 }).limit(50).toArray();
+  },
+  async claimEditProposal(projectId: string, id: string): Promise<boolean> {
+    const { editProposals } = await collections();
+    const result = await editProposals.updateOne(
+      { projectId, id, status: "pending" },
+      { $set: { status: "applying" } }
+    );
+    return result.modifiedCount === 1;
+  },
+  async finishEditProposal(
+    projectId: string,
+    id: string,
+    status: "applied" | "rejected" | "failed",
+    completedAt: string,
+    failureMessage?: string
+  ): Promise<void> {
+    const { editProposals } = await collections();
+    await editProposals.updateOne({ projectId, id }, {
+      $set: {
+        status,
+        completedAt,
+        ...(failureMessage ? { failureMessage: failureMessage.slice(0, 500) } : {})
+      },
+      $unset: failureMessage ? {} : { failureMessage: "" }
+    });
   },
   async close(): Promise<void> {
     await client?.close();
