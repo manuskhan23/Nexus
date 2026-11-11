@@ -8,6 +8,10 @@ import { projectStore, type ProjectRecord } from "../storage/project-store.js";
 const watchers = new Map<string, FSWatcher>();
 const timers = new Map<string, NodeJS.Timeout>();
 const DEBOUNCE_MS = 300;
+const FULL_RESCAN_FILES = new Set([
+  ".gitignore", "package.json", "package-lock.json", "pnpm-lock.yaml",
+  "yarn.lock", "pyproject.toml", "Cargo.toml", "go.mod"
+]);
 
 async function rebuild(project: ProjectRecord): Promise<void> {
   const scan: ProjectScan = await scanProject(project.root);
@@ -15,6 +19,12 @@ async function rebuild(project: ProjectRecord): Promise<void> {
 }
 
 async function applyChange(project: ProjectRecord, relativePath: string): Promise<void> {
+  const normalized = relativePath.replaceAll(path.sep, "/");
+  if (FULL_RESCAN_FILES.has(normalized)) {
+    await rebuild(project);
+    return;
+  }
+
   const absolute = path.resolve(project.root, relativePath);
   try {
     const stat = await lstat(absolute);
