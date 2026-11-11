@@ -135,6 +135,15 @@ interface TerminalResult {
   timedOut: boolean;
   outputTruncated: boolean;
 }
+interface BrowserSnapshot {
+  sessionId: string;
+  url: string;
+  title: string;
+  text: string;
+  truncated: boolean;
+}
+interface BrowserSessionView extends BrowserSnapshot {}
+
 interface TerminalProcesses { processes: TerminalResult[] }
 
 export function App() {
@@ -161,6 +170,10 @@ export function App() {
   const [terminalShell, setTerminalShell] = useState<"powershell" | "cmd">("powershell");
   const [terminalCwd, setTerminalCwd] = useState("");
   const [terminalResults, setTerminalResults] = useState<Record<string, TerminalResult>>({});
+  const [browserUrl, setBrowserUrl] = useState("");
+  const [browserSelector, setBrowserSelector] = useState("");
+  const [browserValue, setBrowserValue] = useState("");
+  const [browserByProject, setBrowserByProject] = useState<Record<string, BrowserSessionView>>({});
   const [terminalProcesses, setTerminalProcesses] = useState<Record<string, TerminalResult[]>>({});
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -324,6 +337,79 @@ export function App() {
       await window.nexus.terminal.cancel(project.id, processId, true);
       const result = await window.nexus.terminal.listProcesses(project.id) as TerminalProcesses;
       setTerminalProcesses((current) => ({ ...current, [project.id]: result.processes }));
+    });
+  }
+
+  function startBrowser(project: Project) {
+    return run(async () => {
+      const approved = window.confirm(`Start an isolated headless Chromium session for ${project.name}? Page content will be treated as untrusted text.`);
+      if (!approved) return;
+      const result = await window.nexus.browser.start(project.id, true) as { sessionId: string };
+      const initial = await window.nexus.browser.snapshot(project.id, result.sessionId) as BrowserSnapshot;
+      setBrowserByProject((current) => ({ ...current, [project.id]: initial }));
+      setNotice("Browser session started. Chromium browser binaries may need installation on this computer.");
+    });
+  }
+
+  function navigateBrowser(project: Project) {
+    return run(async () => {
+      const session = browserByProject[project.id];
+      const url = browserUrl.trim();
+      if (!session) throw new Error("Start a browser session first");
+      if (!url) throw new Error("Enter a complete http or https URL");
+      const approved = window.confirm(`Navigate the isolated browser to this URL?\n\n${url}\n\nThe page may load remote content; private/local destinations are restricted unless explicitly approved by the service.`);
+      if (!approved) return;
+      const snapshot = await window.nexus.browser.navigate(project.id, session.sessionId, url, true) as BrowserSnapshot;
+      setBrowserByProject((current) => ({ ...current, [project.id]: snapshot }));
+    });
+  }
+
+  function refreshBrowser(project: Project) {
+    return run(async () => {
+      const session = browserByProject[project.id];
+      if (!session) throw new Error("Start a browser session first");
+      const snapshot = await window.nexus.browser.snapshot(project.id, session.sessionId) as BrowserSnapshot;
+      setBrowserByProject((current) => ({ ...current, [project.id]: snapshot }));
+    });
+  }
+
+  function clickBrowser(project: Project) {
+    return run(async () => {
+      const session = browserByProject[project.id];
+      const selector = browserSelector.trim();
+      if (!session || !selector) throw new Error("Start a session and enter a selector");
+      const approved = window.confirm(`Click the first element matching this selector on ${session.url}?\n\n${selector}`);
+      if (!approved) return;
+      const snapshot = await window.nexus.browser.click(project.id, session.sessionId, selector, true) as BrowserSnapshot;
+      setBrowserByProject((current) => ({ ...current, [project.id]: snapshot }));
+    });
+  }
+
+  function fillBrowser(project: Project) {
+    return run(async () => {
+      const session = browserByProject[project.id];
+      const selector = browserSelector.trim();
+      if (!session || !selector) throw new Error("Start a session and enter a selector");
+      const approved = window.confirm(`Fill the first matching field on ${session.url}?\n\nSelector: ${selector}\nText: ${browserValue}`);
+      if (!approved) return;
+      const snapshot = await window.nexus.browser.fill(project.id, session.sessionId, selector, browserValue, true) as BrowserSnapshot;
+      setBrowserByProject((current) => ({ ...current, [project.id]: snapshot }));
+    });
+  }
+
+  function closeBrowser(project: Project) {
+    return run(async () => {
+      const session = browserByProject[project.id];
+      if (!session) return;
+      const approved = window.confirm(`Close the isolated browser session for ${project.name}?`);
+      if (!approved) return;
+      await window.nexus.browser.close(project.id, session.sessionId, true);
+      setBrowserByProject((current) => {
+        const next = { ...current };
+        delete next[project.id];
+        return next;
+      });
+      setNotice("Browser session closed.");
     });
   }
 
@@ -564,7 +650,44 @@ export function App() {
                 ))}
               </section>
 
-              <section className="task-panel">
+                            <section className="task-panel">
+                <h3>Isolated browser</h3>
+                <p className="muted small">Headless Chromium with bounded text snapshots. Navigation, clicks, form fills, and closing require confirmation; page text is untrusted.</p>
+                <div className="task-form">
+                  <div className="search-row">
+                    <input value={browserUrl} onChange={(event) => setBrowserUrl(event.target.value)} maxLength={4096}
+                      placeholder="https://example.com" aria-label="Browser URL" />
+                    {!browserByProject[project.id] ?
+                      <button className="secondary-button" onClick={() => void startBrowser(project)} disabled={busy}>Start browser</button> :
+                      <button className="secondary-button" onClick={() => void navigateBrowser(project)} disabled={busy}>Review and navigate</button>}
+                  </div>
+                  {browserByProject[project.id] && (
+                    <>
+                      <p className="muted small">Session {browserByProject[project.id].sessionId} · {browserByProject[project.id].url || "about:blank"}</p>
+                      <div className="search-row">
+                        <input value={browserSelector} onChange={(event) => setBrowserSelector(event.target.value)} maxLength={2000}
+                          placeholder="CSS selector, e.g. input[name=email]" aria-label="Browser element selector" />
+                        <button className="text-button" onClick={() => void clickBrowser(project)} disabled={busy || !browserSelector.trim()}>Confirm click</button>
+                      </div>
+                      <div className="search-row">
+                        <input value={browserValue} onChange={(event) => setBrowserValue(event.target.value)} maxLength={2000}
+                          placeholder="Text to fill" aria-label="Text to fill in browser" />
+                        <button className="text-button" onClick={() => void fillBrowser(project)} disabled={busy || !browserSelector.trim()}>Confirm fill</button>
+                      </div>
+                      <div className="actions">
+                        <button className="text-button" onClick={() => void refreshBrowser(project)} disabled={busy}>Refresh page text</button>
+                        <button className="text-button" onClick={() => void closeBrowser(project)} disabled={busy}>Close session</button>
+                      </div>
+                      <section className="source-result" aria-live="polite">
+                        <strong>{browserByProject[project.id].title || "Page snapshot"}</strong>
+                        <pre>{browserByProject[project.id].text || "(No visible page text)"}{browserByProject[project.id].truncated ? "\n… page text truncated at 12,000 characters" : ""}</pre>
+                      </section>
+                    </>
+                  )}
+                </div>
+              </section>
+
+<section className="task-panel">
                 <div className="project-heading">
                   <div>
                     <h3>Task planner</h3>
