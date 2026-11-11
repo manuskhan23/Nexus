@@ -58,8 +58,15 @@ export function canTransitionTask(current: TaskStatus, next: TaskStatus): boolea
   return TASK_STATUSES.has(current) && TASK_STATUSES.has(next) && TRANSITIONS[current].includes(next);
 }
 
+function redactSecrets(value: string): string {
+  return value
+    .replace(/((?:password|passwd|secret|api[_-]?key|access[_-]?token|refresh[_-]?token)\\s*[:=]\\s*)[^\\s,;]+/gi, "$1[redacted]")
+    .replace(/mongodb(?:\\+srv)?:\\/\\/[^@\\s]+@/gi, "mongodb://[redacted]@")
+    .replace(/-----BEGIN [^-]*PRIVATE KEY-----[\\s\\S]*?-----END [^-]*PRIVATE KEY-----/g, "[redacted private key]");
+}
+
 function appendEvent(task: TaskRecord, type: string, message: string, stepId?: string): void {
-  task.events.push({ id: randomUUID(), at: new Date().toISOString(), type, message: message.slice(0, 500), ...(stepId ? { stepId } : {}) });
+  task.events.push({ id: randomUUID(), at: new Date().toISOString(), type, message: redactSecrets(message).slice(0, 500), ...(stepId ? { stepId } : {}) });
   if (task.events.length > MAX_EVENTS) task.events.splice(0, task.events.length - MAX_EVENTS);
 }
 
@@ -87,8 +94,8 @@ export async function createTask(
   const task: TaskRecord = {
     id: randomUUID(),
     projectId,
-    title: title.trim(),
-    description: description.trim(),
+    title: redactSecrets(title.trim()),
+    description: redactSecrets(description.trim()),
     priority,
     status: "pending",
     steps,
@@ -123,7 +130,8 @@ export async function transitionTask(projectId: string, id: string, next: TaskSt
       )
     )?.id ?? null;
   }
-  if (next === "failed") task.error = note.slice(0, 500);
+  if (next === "failed") task.error = redactSecrets(note).slice(0, 500);
+  else if (next === "running" || next === "planning") delete task.error;
   appendEvent(task, `task.${next}`, note || `Task moved to ${next}`);
   if (!await projectStore.saveTask(task, expectedUpdatedAt)) throw new Error("Task changed concurrently; reload and retry");
   return task;
@@ -161,10 +169,12 @@ export async function transitionTaskStep(
   step.status = next;
   if (next === "running") step.startedAt = now;
   if (next === "completed" || next === "failed" || next === "skipped") step.completedAt = now;
-  if (result) step.result = result.slice(0, 2000);
+  if (result) step.result = redactSecrets(result).slice(0, 2000);
   task.progress = Math.round(task.steps.filter((candidate) => candidate.status === "completed").length / task.steps.length * 100);
   task.currentStepId = task.steps.find((candidate) => candidate.status === "running")?.id ??
-    task.steps.find((candidate) => candidate.status === "pending")?.id ?? null;
+    task.steps.find((candidate) => candidate.status === "pending" && candidate.dependencies.every((dependency) =>
+      task.steps.find((item) => item.id === dependency)?.status === "completed"
+    ))?.id ?? null;
   task.updatedAt = now;
   appendEvent(task, `step.${next}`, result || `Step ${step.title} moved to ${next}`, step.id);
   if (!await projectStore.saveTask(task, expectedUpdatedAt)) throw new Error("Task changed concurrently; reload and retry");
