@@ -77,17 +77,26 @@ app.delete("/api/projects/:id", async (request, response) => {
 });
 
 const port = Number(process.env.NEXUS_API_PORT ?? 3001);
+let server: ReturnType<typeof app.listen> | undefined;
 
 async function start(): Promise<void> {
   const projects = await projectStore.list();
   watchProjects(projects);
-  app.listen(port, "127.0.0.1", () => {
+  server = app.listen(port, "127.0.0.1", () => {
     console.log(JSON.stringify({ event: "server.started", port, host: "127.0.0.1" }));
   });
 }
 
-process.once("SIGINT", () => stopProjectWatchers());
-process.once("SIGTERM", () => stopProjectWatchers());
+async function shutdown(): Promise<void> {
+  stopProjectWatchers();
+  if (server) {
+    await new Promise<void>((resolve) => server!.close(() => resolve()));
+  }
+  await projectStore.close();
+}
+
+process.once("SIGINT", () => { void shutdown(); });
+process.once("SIGTERM", () => { void shutdown(); });
 
 start().catch((error: unknown) => {
   console.error(JSON.stringify({
