@@ -76,11 +76,12 @@ export async function createTask(
       !["low", "normal", "high"].includes(priority)) throw new Error("Invalid task details");
   validateTaskPlan(plan);
   const now = new Date().toISOString();
+  const stepIds = plan.map(() => randomUUID());
   const steps: TaskStepRecord[] = plan.map((step, index) => ({
-    id: randomUUID(),
+    id: stepIds[index],
     title: step.title.trim(),
     description: (step.description ?? "").trim(),
-    dependencies: (step.dependencies ?? []).map((dependency) => String(dependency)),
+    dependencies: (step.dependencies ?? []).map((dependency) => stepIds[dependency]),
     status: "pending"
   }));
   const task: TaskRecord = {
@@ -118,7 +119,7 @@ export async function transitionTask(projectId: string, id: string, next: TaskSt
   if (next === "running") {
     task.currentStepId = task.steps.find((step) =>
       step.status === "pending" && step.dependencies.every((dependency) =>
-        task.steps[Number(dependency)]?.status === "completed"
+        task.steps.find((candidate) => candidate.id === dependency)?.status === "completed"
       )
     )?.id ?? null;
   }
@@ -149,7 +150,7 @@ export async function transitionTaskStep(
   };
   if (!allowed[step.status].includes(next)) throw new Error(`Invalid step transition: ${step.status} to ${next}`);
   if (next === "running" && step.dependencies.some((dependency) =>
-    task.steps[Number(dependency)]?.status !== "completed"
+    task.steps.find((candidate) => candidate.id === dependency)?.status !== "completed"
   )) throw new Error("Complete the step dependencies first");
   if (next === "running" && task.steps.some((candidate) => candidate.status === "running")) {
     throw new Error("Finish the current running step first");
