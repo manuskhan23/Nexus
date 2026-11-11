@@ -153,21 +153,21 @@ export async function startCommand(
   };
   child.stdout?.on("data", (chunk: Buffer) => append("stdout", chunk));
   child.stderr?.on("data", (chunk: Buffer) => append("stderr", chunk));
-  child.once("error", (error) => {
-    item.status = "failed";
-    item.stderr = (item.stderr + "\n" + error.message).slice(0, MAX_OUTPUT_BYTES);
-    item.durationMs = Date.now() - startedAtMs;
-    clearTimeout(item.timer);
-    if (item.tempDirectory) void rm(item.tempDirectory, { recursive: true, force: true }).catch(() => undefined);
-    pruneHistory();
-  });
+  let finalized = false;
   const markExited = (code: number | null) => {
+    if (finalized) return;
+    finalized = true;
     item.status = code === 0 && !item.timedOut ? "completed" : "failed";
     item.exitCode = code;
     item.durationMs = Date.now() - startedAtMs;
     clearTimeout(item.timer);
+    if (item.tempDirectory) void rm(item.tempDirectory, { recursive: true, force: true }).catch(() => undefined);
     pruneHistory();
   };
+  child.once("error", (error) => {
+    item.stderr = (item.stderr + "\n" + error.message).slice(0, MAX_OUTPUT_BYTES);
+    markExited(null);
+  });
   child.once("exit", (code) => markExited(code));
   child.once("close", (code) => markExited(code));
   pruneHistory();
