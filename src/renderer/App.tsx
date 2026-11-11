@@ -90,6 +90,12 @@ interface EditProposal {
 interface EditProposalList {
   proposals: Array<Omit<EditProposal, "changes"> & { changes: Array<{ path: string; action: "write" | "delete"; expectedHash: string | null; size: number }> }>;
 }
+interface DraftChange {
+  path: string;
+  action: "write" | "delete";
+  expectedHash: string | null;
+  content?: string;
+}
 
 export function App() {
   const [projects, setProjects] = useState<Project[]>([]);
@@ -102,6 +108,7 @@ export function App() {
   const [editPath, setEditPath] = useState("");
   const [editTitle, setEditTitle] = useState("");
   const [drafts, setDrafts] = useState<Record<string, EditableFile>>({});
+  const [editBatch, setEditBatch] = useState<Record<string, DraftChange[]>>({});
   const [editProposals, setEditProposals] = useState<Record<string, EditProposalList["proposals"]>>({});
   const [selectedEdits, setSelectedEdits] = useState<Record<string, EditProposal>>({});
   const [error, setError] = useState("");
@@ -210,21 +217,35 @@ export function App() {
     });
   }
 
-  function stageEdit(project: Project, action: "write" | "delete") {
+  function queueEditChange(project: Project, action: "write" | "delete") {
     return run(async () => {
       const draft = drafts[project.id];
       if (!draft) throw new Error("Inspect the file before staging a change");
       if (action === "delete" && !draft.exists) throw new Error("The file does not exist");
-      const result = await window.nexus.edits.propose(project.id, editTitle.trim() || `Edit ${draft.path}`, [{
+      const batch = editBatch[project.id] ?? [];
+      if (batch.some((change) => change.path === draft.path)) throw new Error("This file is already in the proposal batch");
+      if (batch.length >= 19) throw new Error("A proposal can contain at most 20 file changes");
+      const change: DraftChange = {
         path: draft.path,
         action,
         expectedHash: draft.hash,
         ...(action === "write" ? { content: draft.content } : {})
-      }]) as EditProposal;
+      };
+      setEditBatch((current) => ({ ...current, [project.id]: [...batch, change] }));
+      setNotice(`Added ${draft.path} to the proposal batch.`);
+    });
+  }
+
+  function stageEditBatch(project: Project) {
+    return run(async () => {
+      const batch = editBatch[project.id] ?? [];
+      if (batch.length === 0) throw new Error("Add at least one file change to the batch");
+      const result = await window.nexus.edits.propose(project.id, editTitle.trim() || `Edit ${batch.length} file(s)`, batch) as EditProposal;
       const list = await window.nexus.edits.list(project.id) as EditProposalList;
       setEditProposals((current) => ({ ...current, [project.id]: list.proposals }));
       setSelectedEdits((current) => ({ ...current, [project.id]: result }));
-      setNotice(`Prepared ${action} proposal for ${draft.path}. Review its diff before applying.`);
+      setEditBatch((current) => ({ ...current, [project.id]: [] }));
+      setNotice(`Prepared a ${batch.length}-file proposal. Review its diffs before applying.`);
     });
   }
 
@@ -363,11 +384,19 @@ export function App() {
                       }))}
                       maxLength={1_000_000} spellCheck={false} aria-label="Proposed file content" />
                     <div className="actions">
-                      <button className="secondary-button" onClick={() => void stageEdit(project, "write")} disabled={busy}>Review change</button>
+                      <button className="secondary-button" onClick={() => void queueEditChange(project, "write")} disabled={busy}>Add change</button>
                       {drafts[project.id].exists &&
-                        <button className="text-button" onClick={() => void stageEdit(project, "delete")} disabled={busy}>Propose delete</button>}
+                        <button className="text-button" onClick={() => void queueEditChange(project, "delete")} disabled={busy}>Add delete</button>}
                       <button className="text-button" onClick={() => void loadEditProposals(project)} disabled={busy}>Edit history</button>
                     </div>
+                    {(editBatch[project.id] ?? []).length > 0 && (
+                      <div className="edit-batch">
+                        <p className="muted small">Queued {editBatch[project.id].length} file change(s): {editBatch[project.id].map((change) => change.path).join(", ")}</p>
+                        <button className="primary-button" onClick={() => void stageEditBatch(project)} disabled={busy}>
+                          Review {editBatch[project.id].length}-file proposal
+                        </button>
+                      </div>
+                    )}
                   </div>
                 )}
                 {(editProposals[project.id] ?? []).length > 0 && (
