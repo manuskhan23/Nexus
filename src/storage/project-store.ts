@@ -10,10 +10,22 @@ export interface ProjectRecord {
   indexVersion: number;
 }
 
+export interface FileSnapshot {
+  id: string;
+  projectId: string;
+  path: string;
+  contentHash: string;
+  size: number;
+  createdAt: string;
+  reason: string;
+  blobKey: string;
+}
+
 interface StoredProject extends ProjectRecord {}
 interface StoredFile extends IndexedFile {
   projectId: string;
 }
+interface StoredSnapshot extends FileSnapshot {}
 
 let client: MongoClient | undefined;
 let database: Db | undefined;
@@ -32,7 +44,9 @@ async function connect(): Promise<void> {
         database.collection<StoredProject>("projects").createIndex({ id: 1 }, { unique: true }),
         database.collection<StoredProject>("projects").createIndex({ root: 1 }, { unique: true }),
         database.collection<StoredFile>("project_files").createIndex({ projectId: 1, path: 1 }, { unique: true }),
-        database.collection<StoredFile>("project_files").createIndex({ projectId: 1, language: 1 })
+        database.collection<StoredFile>("project_files").createIndex({ projectId: 1, language: 1 }),
+        database.collection<StoredSnapshot>("file_snapshots").createIndex({ id: 1 }, { unique: true }),
+        database.collection<StoredSnapshot>("file_snapshots").createIndex({ projectId: 1, path: 1, createdAt: -1 })
       ]);
     })();
   }
@@ -47,11 +61,16 @@ async function connect(): Promise<void> {
   }
 }
 
-async function collections(): Promise<{ projects: Collection<StoredProject>; files: Collection<StoredFile> }> {
+async function collections(): Promise<{
+  projects: Collection<StoredProject>;
+  files: Collection<StoredFile>;
+  snapshots: Collection<StoredSnapshot>;
+}> {
   await connect();
   return {
     projects: database!.collection<StoredProject>("projects"),
-    files: database!.collection<StoredFile>("project_files")
+    files: database!.collection<StoredFile>("project_files"),
+    snapshots: database!.collection<StoredSnapshot>("file_snapshots")
   };
 }
 
@@ -80,11 +99,10 @@ export const projectStore = {
   },
   async listIndexedFiles(id: string): Promise<IndexedFile[]> {
     const { files } = await collections();
-    const documents = await files.find(
+    return files.find(
       { projectId: id },
       { projection: { _id: 0, projectId: 0 } }
     ).toArray();
-    return documents;
   },
   async add(project: ProjectRecord): Promise<void> {
     const { projects } = await collections();
@@ -114,6 +132,20 @@ export const projectStore = {
     const { projects, files } = await collections();
     await files.deleteOne({ projectId: id, path: relativePath.replaceAll("\\", "/") });
     await touch(projects, id, indexedAt);
+  },
+  async addSnapshot(snapshot: FileSnapshot): Promise<void> {
+    const { snapshots } = await collections();
+    await snapshots.insertOne(snapshot);
+  },
+  async getSnapshot(projectId: string, snapshotId: string): Promise<FileSnapshot | undefined> {
+    const { snapshots } = await collections();
+    const document = await snapshots.findOne({ projectId, id: snapshotId }, { projection: { _id: 0 } });
+    return document ?? undefined;
+  },
+  async listSnapshots(projectId: string, relativePath?: string): Promise<FileSnapshot[]> {
+    const { snapshots } = await collections();
+    const filter = relativePath ? { projectId, path: relativePath } : { projectId };
+    return snapshots.find(filter, { projection: { _id: 0 } }).sort({ createdAt: -1 }).limit(100).toArray();
   },
   async close(): Promise<void> {
     await client?.close();
