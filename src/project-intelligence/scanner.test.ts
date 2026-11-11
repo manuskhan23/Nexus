@@ -41,12 +41,14 @@ test("nested ignore files are honored by full and incremental indexing", async (
 test("ignore negation can re-include a file under a non-ignored parent", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "nexus-negation-test-"));
   try {
-    await mkdir(path.join(root, "build"), { recursive: true });
-    await writeFile(path.join(root, ".gitignore"), "build/*\n!build/keep.ts\n", "utf8");
-    await writeFile(path.join(root, "build", "keep.ts"), "export const kept = true;", "utf8");
-    await writeFile(path.join(root, "build", "drop.ts"), "export const dropped = true;", "utf8");
+    await mkdir(path.join(root, "output"), { recursive: true });
+    await writeFile(path.join(root, ".gitignore"), "output/*\n!output/keep.ts\n", "utf8");
+    await writeFile(path.join(root, "output", "keep.ts"), "export const kept = true;", "utf8");
+    await writeFile(path.join(root, "output", "drop.ts"), "export const dropped = true;", "utf8");
     const scan = await scanProject(root);
-    assert.deepEqual(scan.files.map((file) => file.path), ["build/keep.ts"]);
+    assert.deepEqual(scan.files.map((file) => file.path), ["output/keep.ts"]);
+    assert.equal((await scanProjectFile(root, "output/keep.ts"))?.path, "output/keep.ts");
+    assert.equal(await scanProjectFile(root, "output/drop.ts"), null);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

@@ -43,7 +43,8 @@ async function applyChange(project: ProjectRecord, relativePath: string): Promis
   if (indexed) {
     await projectStore.upsertIndexedFile(project.id, indexed, changedAt);
   } else {
-    await projectStore.removeIndexedFile(project.id, relativePath, changedAt);
+    // Index paths use forward slashes on every platform.
+    await projectStore.removeIndexedFile(project.id, normalized, changedAt);
   }
 }
 
