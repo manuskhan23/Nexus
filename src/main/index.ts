@@ -59,6 +59,16 @@ function registerIpc(): void {
     return apiRequest(`/api/projects/${encodeURIComponent(id)}/scan`, { method: "POST" });
   });
 
+  ipcMain.handle("projects:context", async (event, id: unknown, query: unknown) => {
+    assertTrustedRenderer(event);
+    if (typeof id !== "string" || id.length > 64) throw new Error("Invalid project identifier");
+    if (typeof query !== "string" || query.length > 512) throw new Error("Invalid context query");
+    return apiRequest(`/api/projects/${encodeURIComponent(id)}/context`, {
+      method: "POST",
+      body: JSON.stringify({ query })
+    });
+  });
+
   ipcMain.handle("projects:remove", async (event, id: unknown) => {
     assertTrustedRenderer(event);
     if (typeof id !== "string" || id.length > 64) throw new Error("Invalid project identifier");
