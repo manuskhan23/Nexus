@@ -22,6 +22,46 @@ export interface FileSnapshot {
   blobKey: string;
 }
 
+export type TaskStatus = "pending" | "planning" | "awaiting_approval" | "running" | "paused" | "failed" | "completed" | "cancelled";
+export type TaskStepStatus = "pending" | "running" | "completed" | "failed" | "skipped";
+
+export interface TaskStepRecord {
+  id: string;
+  title: string;
+  description: string;
+  dependencies: string[];
+  status: TaskStepStatus;
+  startedAt?: string;
+  completedAt?: string;
+  result?: string;
+}
+
+export interface TaskEventRecord {
+  id: string;
+  at: string;
+  type: string;
+  message: string;
+  stepId?: string;
+}
+
+export interface TaskRecord {
+  id: string;
+  projectId: string;
+  title: string;
+  description: string;
+  priority: "low" | "normal" | "high";
+  status: TaskStatus;
+  steps: TaskStepRecord[];
+  currentStepId: string | null;
+  progress: number;
+  createdAt: string;
+  updatedAt: string;
+  startedAt?: string;
+  completedAt?: string;
+  error?: string;
+  events: TaskEventRecord[];
+}
+
 export interface EditProposalChange {
   path: string;
   action: "write" | "delete" | "move";
@@ -50,6 +90,7 @@ interface StoredFile extends IndexedFile {
 }
 interface StoredSnapshot extends FileSnapshot {}
 interface StoredEditProposal extends EditProposal {}
+interface StoredTask extends TaskRecord {}
 
 let client: MongoClient | undefined;
 let database: Db | undefined;
@@ -72,7 +113,9 @@ async function connect(): Promise<void> {
         database.collection<StoredSnapshot>("file_snapshots").createIndex({ id: 1 }, { unique: true }),
         database.collection<StoredSnapshot>("file_snapshots").createIndex({ projectId: 1, path: 1, createdAt: -1 }),
         database.collection<StoredEditProposal>("edit_proposals").createIndex({ id: 1 }, { unique: true }),
-        database.collection<StoredEditProposal>("edit_proposals").createIndex({ projectId: 1, createdAt: -1 })
+        database.collection<StoredEditProposal>("edit_proposals").createIndex({ projectId: 1, createdAt: -1 }),
+        database.collection<StoredTask>("tasks").createIndex({ id: 1 }, { unique: true }),
+        database.collection<StoredTask>("tasks").createIndex({ projectId: 1, updatedAt: -1 })
       ]);
     })();
   }
@@ -92,13 +135,15 @@ async function collections(): Promise<{
   files: Collection<StoredFile>;
   snapshots: Collection<StoredSnapshot>;
   editProposals: Collection<StoredEditProposal>;
+  tasks: Collection<StoredTask>;
 }> {
   await connect();
   return {
     projects: database!.collection<StoredProject>("projects"),
     files: database!.collection<StoredFile>("project_files"),
     snapshots: database!.collection<StoredSnapshot>("file_snapshots"),
-    editProposals: database!.collection<StoredEditProposal>("edit_proposals")
+    editProposals: database!.collection<StoredEditProposal>("edit_proposals"),
+    tasks: database!.collection<StoredTask>("tasks")
   };
 }
 
@@ -211,6 +256,23 @@ export const projectStore = {
     } else {
       await editProposals.updateOne({ projectId, id }, { $set: set, $unset: { failureMessage: "" as const } });
     }
+  },
+  async addTask(task: TaskRecord): Promise<void> {
+    const { tasks } = await collections();
+    await tasks.insertOne(task);
+  },
+  async getTask(projectId: string, id: string): Promise<TaskRecord | undefined> {
+    const { tasks } = await collections();
+    return (await tasks.findOne({ projectId, id }, { projection: { _id: 0 } })) ?? undefined;
+  },
+  async listTasks(projectId: string): Promise<TaskRecord[]> {
+    const { tasks } = await collections();
+    return tasks.find({ projectId }, { projection: { _id: 0 } }).sort({ updatedAt: -1 }).limit(100).toArray();
+  },
+  async saveTask(task: TaskRecord, expectedUpdatedAt: string): Promise<boolean> {
+    const { tasks } = await collections();
+    const result = await tasks.replaceOne({ projectId: task.projectId, id: task.id, updatedAt: expectedUpdatedAt }, task);
+    return result.modifiedCount === 1;
   },
   async close(): Promise<void> {
     await client?.close();
