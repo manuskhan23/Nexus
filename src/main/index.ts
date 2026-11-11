@@ -69,6 +69,57 @@ function registerIpc(): void {
     });
   });
 
+  ipcMain.handle("files:read", async (event, id: unknown, filePath: unknown) => {
+    assertTrustedRenderer(event);
+    if (typeof id !== "string" || id.length > 64 || typeof filePath !== "string" || filePath.length > 4096) {
+      throw new Error("Invalid project file reference");
+    }
+    return apiRequest(`/api/projects/${encodeURIComponent(id)}/files?path=${encodeURIComponent(filePath)}`);
+  });
+
+  ipcMain.handle("edits:list", async (event, id: unknown) => {
+    assertTrustedRenderer(event);
+    if (typeof id !== "string" || id.length > 64) throw new Error("Invalid project identifier");
+    return apiRequest(`/api/projects/${encodeURIComponent(id)}/edit-proposals`);
+  });
+
+  ipcMain.handle("edits:propose", async (event, id: unknown, title: unknown, changes: unknown) => {
+    assertTrustedRenderer(event);
+    if (typeof id !== "string" || id.length > 64 || typeof title !== "string" || title.length > 160 ||
+        !Array.isArray(changes) || changes.length === 0 || changes.length > 20) {
+      throw new Error("Invalid edit proposal");
+    }
+    return apiRequest(`/api/projects/${encodeURIComponent(id)}/edit-proposals`, {
+      method: "POST",
+      body: JSON.stringify({ title, changes })
+    });
+  });
+
+  ipcMain.handle("edits:get", async (event, id: unknown, proposalId: unknown) => {
+    assertTrustedRenderer(event);
+    if (typeof id !== "string" || id.length > 64 || typeof proposalId !== "string") {
+      throw new Error("Invalid edit proposal reference");
+    }
+    return apiRequest(`/api/projects/${encodeURIComponent(id)}/edit-proposals/${encodeURIComponent(proposalId)}`);
+  });
+
+  ipcMain.handle("edits:apply", async (event, id: unknown, proposalId: unknown) => {
+    assertTrustedRenderer(event);
+    if (typeof id !== "string" || id.length > 64 || typeof proposalId !== "string") {
+      throw new Error("Invalid edit proposal reference");
+    }
+    return apiRequest(`/api/projects/${encodeURIComponent(id)}/edit-proposals/${encodeURIComponent(proposalId)}/apply`, { method: "POST" });
+  });
+
+  ipcMain.handle("edits:reject", async (event, id: unknown, proposalId: unknown) => {
+    assertTrustedRenderer(event);
+    if (typeof id !== "string" || id.length > 64 || typeof proposalId !== "string") {
+      throw new Error("Invalid edit proposal reference");
+    }
+    await apiRequest(`/api/projects/${encodeURIComponent(id)}/edit-proposals/${encodeURIComponent(proposalId)}/reject`, { method: "POST" });
+    return true;
+  });
+
   ipcMain.handle("snapshots:list", async (event, id: unknown, filePath?: unknown) => {
     assertTrustedRenderer(event);
     if (typeof id !== "string" || id.length > 64) throw new Error("Invalid project identifier");
