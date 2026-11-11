@@ -33,8 +33,10 @@ The repository was empty at the start. The stack is Electron main/preload, a Rea
 - Phase 2: bounded keyword context retrieval is implemented. Search returns up to 8 source excerpts with file paths, line ranges, hashes, match reasons, and truncation status. It reads no more than 750 candidate files / 64 MiB and returns at most 16,000 excerpt characters.
 - Source excerpts are labeled as untrusted repository content; the search service does not generate conclusions or execute project instructions.
 - Semantic retrieval, conversation context, memory retrieval, and provider summarization are not implemented.
-- Phase 4: local file snapshots, bounded line comparison, and hash-checked restore are implemented. Snapshots exclude secret-looking paths, binary files, symlinks, and files larger than 5 MiB; restore preserves a safety snapshot first.
-- Phase 3 and Phases 5–16 remain open. The product is not production-ready.
+- Phase 3: reviewable file edit proposals are in progress. Staged changes are held locally, checked against inspected file hashes, shown as diffs, and require explicit approval before application.
+- Phase 4: file snapshots, bounded comparison, and hash-checked restore are implemented. Project-wide snapshots, deduplication, redo, and edit operation integration are still open.
+- Phases 5–16 remain open. The product is not production-ready.
+- See [the engineering audit and dependency-aware roadmap](docs/engineering-audit-and-roadmap.md) for the completion matrix and acceptance work.
 
 Set MONGODB_URI in the environment available to the Electron process. MONGODB_DATABASE is optional and defaults to nexus. Never commit credentials.
 
