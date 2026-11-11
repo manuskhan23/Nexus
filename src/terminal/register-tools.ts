@@ -1,5 +1,5 @@
 import type { ToolRegistry } from "../tools/tool-registry.js";
-import { cancelCommand, listOwnedProcesses, runCommand, type CommandRequest } from "./process-manager.js";
+import { cancelCommand, getOwnedProcess, listOwnedProcesses, startCommand, type CommandRequest } from "./process-manager.js";
 
 function validateCommand(input: unknown): CommandRequest {
   if (!input || typeof input !== "object" || Array.isArray(input)) throw new Error("Command input must be an object");
@@ -36,7 +36,7 @@ export function registerTerminalTools(registry: ToolRegistry): void {
     risk: "high",
     timeoutMs: 125_000,
     validate: validateCommand,
-    execute: (input, context) => runCommand(input, context.approved)
+    execute: (input, context) => startCommand(input, context.approved)
   });
   registry.register({
     id: "terminal.cancel",
@@ -46,6 +46,19 @@ export function registerTerminalTools(registry: ToolRegistry): void {
     timeoutMs: 5_000,
     validate: validateProcess,
     execute: (input, context) => cancelCommand(input.projectId, input.processId, context.approved)
+  });
+  registry.register({
+    id: "terminal.get",
+    name: "Read terminal process",
+    description: "Read bounded output and status for a project-owned process",
+    risk: "low",
+    timeoutMs: 2_000,
+    validate: validateProcess,
+    execute(input) {
+      const result = getOwnedProcess(input.projectId, input.processId);
+      if (!result) throw new Error("Process not found");
+      return result;
+    }
   });
   registry.register({
     id: "terminal.list",
