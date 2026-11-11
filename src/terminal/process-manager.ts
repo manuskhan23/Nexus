@@ -3,7 +3,7 @@ import { execFile, type ChildProcess } from "node:child_process";
 import { realpath } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
-import { projectStore } from "../storage/project-store.js";
+import { projectStore, type ProjectRecord } from "../storage/project-store.js";
 
 const execFileAsync = promisify(execFile);
 const MAX_COMMAND_LENGTH = 16_000;
@@ -63,7 +63,7 @@ function terminateTree(child: ChildProcess): void {
   }
 }
 
-export async function runCommand(request: CommandRequest, approved: boolean): Promise<CommandResult> {
+export async function runCommand(\n  request: CommandRequest,\n  approved: boolean,\n  getProject: (projectId: string) => Promise<ProjectRecord | undefined> = projectStore.get\n): Promise<CommandResult> {
   if (!approved) throw new Error("Explicit approval is required to run terminal commands");
   if (process.platform !== "win32") throw new Error("Terminal execution is supported only on Windows");
   if (!request.projectId || request.projectId.length > 64) throw new Error("Invalid project identifier");
@@ -71,7 +71,7 @@ export async function runCommand(request: CommandRequest, approved: boolean): Pr
     throw new Error("Command must contain 1 to 16000 characters");
   }
   if (request.shell !== "powershell" && request.shell !== "cmd") throw new Error("Unsupported shell");
-  const project = await projectStore.get(request.projectId);
+  const project = await getProject(request.projectId);
   if (!project) throw new Error("Project not found");
   const cwd = await resolveWorkingDirectory(project.root, request.cwd);
   const timeoutMs = Math.max(1_000, Math.min(request.timeoutMs ?? 30_000, MAX_TIMEOUT_MS));
