@@ -98,6 +98,26 @@ interface DraftChange {
   destinationPath?: string;
   content?: string;
 }
+interface TaskStep {
+  id: string;
+  title: string;
+  description: string;
+  dependencies: string[];
+  status: "pending" | "running" | "completed" | "failed" | "skipped";
+}
+interface Task {
+  id: string;
+  projectId: string;
+  title: string;
+  description: string;
+  priority: "low" | "normal" | "high";
+  status: "pending" | "planning" | "awaiting_approval" | "running" | "paused" | "failed" | "completed" | "cancelled";
+  steps: TaskStep[];
+  progress: number;
+  currentStepId: string | null;
+  error?: string;
+}
+interface TaskList { tasks: Task[] }
 
 export function App() {
   const [projects, setProjects] = useState<Project[]>([]);
@@ -114,6 +134,11 @@ export function App() {
   const [editBatch, setEditBatch] = useState<Record<string, DraftChange[]>>({});
   const [editProposals, setEditProposals] = useState<Record<string, EditProposalList["proposals"]>>({});
   const [selectedEdits, setSelectedEdits] = useState<Record<string, EditProposal>>({});
+  const [taskTitle, setTaskTitle] = useState("");
+  const [taskDescription, setTaskDescription] = useState("");
+  const [taskPlan, setTaskPlan] = useState("");
+  const [taskPriority, setTaskPriority] = useState<"low" | "normal" | "high">("normal");
+  const [tasksByProject, setTasksByProject] = useState<Record<string, Task[]>>({});
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
 
@@ -208,6 +233,52 @@ export function App() {
       });
       setNotice(`Restored ${snapshot.path}. A safety snapshot was kept in history.`);
     });
+  }
+
+  function loadTasks(project: Project) {
+    return run(async () => {
+      const result = await window.nexus.tasks.list(project.id) as TaskList;
+      setTasksByProject((current) => ({ ...current, [project.id]: result.tasks }));
+    });
+  }
+
+  function createPlannedTask(project: Project) {
+    return run(async () => {
+      const lines = taskPlan.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+      if (!lines.length) throw new Error("Enter at least one plan step");
+      const steps = lines.map((title, index) => ({
+        title,
+        dependencies: index === 0 ? [] : [index - 1]
+      }));
+      await window.nexus.tasks.create(project.id, {
+        title: taskTitle,
+        description: taskDescription,
+        priority: taskPriority,
+        steps
+      });
+      const result = await window.nexus.tasks.list(project.id) as TaskList;
+      setTasksByProject((current) => ({ ...current, [project.id]: result.tasks }));
+      setTaskTitle("");
+      setTaskDescription("");
+      setTaskPlan("");
+      setNotice("Task and dependency plan saved.");
+    });
+  }
+
+  async function updateTask(project: Project, task: Task, status: Task["status"], note = "") {
+    const result = await window.nexus.tasks.setStatus(project.id, task.id, status, note) as { task: Task };
+    setTasksByProject((current) => ({
+      ...current,
+      [project.id]: (current[project.id] ?? []).map((item) => item.id === task.id ? result.task : item)
+    }));
+  }
+
+  async function updateTaskStep(project: Project, task: Task, step: TaskStep, status: TaskStep["status"]) {
+    const result = await window.nexus.tasks.setStep(project.id, task.id, step.id, status) as { task: Task };
+    setTasksByProject((current) => ({
+      ...current,
+      [project.id]: (current[project.id] ?? []).map((item) => item.id === task.id ? result.task : item)
+    }));
   }
 
   function loadEditFile(project: Project) {
@@ -366,6 +437,63 @@ export function App() {
                 <button className="secondary-button" onClick={() => void rescan(project)} disabled={busy}>Rescan</button>
                 <button className="text-button" onClick={() => void removeProject(project)} disabled={busy}>Remove</button>
               </div>
+
+              <section className="task-panel">
+                <div className="project-heading">
+                  <div>
+                    <h3>Task planner</h3>
+                    <p className="muted small">Save a dependency-aware plan and track each step. Execution is manual until the background agent engine is implemented.</p>
+                  </div>
+                  <button className="text-button" onClick={() => void loadTasks(project)} disabled={busy}>Task history</button>
+                </div>
+                <div className="task-form">
+                  <input value={taskTitle} onChange={(event) => setTaskTitle(event.target.value)}
+                    maxLength={160} placeholder="Task title" aria-label="Task title" />
+                  <textarea value={taskDescription} onChange={(event) => setTaskDescription(event.target.value)}
+                    maxLength={4000} placeholder="Describe the intended outcome" aria-label="Task description" />
+                  <textarea value={taskPlan} onChange={(event) => setTaskPlan(event.target.value)}
+                    placeholder={"One plan step per line\nInspect existing code\nImplement the change\nVerify the result"} aria-label="Task plan steps" />
+                  <div className="actions">
+                    <select value={taskPriority} onChange={(event) => setTaskPriority(event.target.value as typeof taskPriority)} aria-label="Task priority">
+                      <option value="low">Low priority</option>
+                      <option value="normal">Normal priority</option>
+                      <option value="high">High priority</option>
+                    </select>
+                    <button className="secondary-button" onClick={() => void createPlannedTask(project)} disabled={busy || !taskTitle.trim()}>Save plan</button>
+                  </div>
+                </div>
+                {(tasksByProject[project.id] ?? []).map((task) => (
+                  <article className="task-card" key={task.id}>
+                    <div className="project-heading">
+                      <strong>{task.title}</strong>
+                      <span className="index-badge">{task.status.toUpperCase()} · {task.progress}%</span>
+                    </div>
+                    <p className="muted small">{task.description}</p>
+                    <progress value={task.progress} max="100" aria-label="Task progress" />
+                    <ol className="task-steps">
+                      {task.steps.map((step) => (
+                        <li key={step.id}>
+                          <span>{step.title} · {step.status}{step.dependencies.length ? " · depends on earlier steps" : ""}</span>
+                          {task.status === "running" && step.status === "pending" &&
+                            <button className="text-button" onClick={() => void run(() => updateTaskStep(project, task, step, "running"))} disabled={busy}>Start</button>}
+                          {task.status === "running" && step.status === "running" &&
+                            <button className="text-button" onClick={() => void run(() => updateTaskStep(project, task, step, "completed"))} disabled={busy}>Complete</button>}
+                        </li>
+                      ))}
+                    </ol>
+                    <div className="actions">
+                      {task.status === "pending" && <button className="text-button" onClick={() => void run(() => updateTask(project, task, "planning"))} disabled={busy}>Start planning</button>}
+                      {task.status === "planning" && <button className="text-button" onClick={() => void run(() => updateTask(project, task, "awaiting_approval"))} disabled={busy}>Request approval</button>}
+                      {task.status === "awaiting_approval" && <button className="secondary-button" onClick={() => void run(() => updateTask(project, task, "running"))} disabled={busy}>Approve and run</button>}
+                      {task.status === "running" && <button className="text-button" onClick={() => void run(() => updateTask(project, task, "paused"))} disabled={busy}>Pause</button>}
+                      {(task.status === "paused" || task.status === "failed") && <button className="text-button" onClick={() => void run(() => updateTask(project, task, "running"))} disabled={busy}>Resume</button>}
+                      {task.status === "running" && task.progress === 100 && <button className="text-button" onClick={() => void run(() => updateTask(project, task, "completed"))} disabled={busy}>Mark complete</button>}
+                      {!["completed", "cancelled"].includes(task.status) && <button className="text-button" onClick={() => void run(() => updateTask(project, task, "cancelled"))} disabled={busy}>Cancel</button>}
+                    </div>
+                    {task.error && <p className="message error">{task.error}</p>}
+                  </article>
+                ))}
+              </section>
 
               <section className="edit-panel">
                 <h3>Reviewable code edits</h3>
