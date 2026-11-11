@@ -24,14 +24,14 @@ async function waitForProcess(projectId: string, processId: string) {
   return result;
 }
 
-test("PowerShell runs inside a registered project and captures output", {
+test("CMD runs inside a registered project and captures output", {
   skip: process.platform !== "win32"
 }, async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "nexus-terminal-"));
   let processId: string | undefined;
   try {
     const started = await startCommand(
-      { projectId: "test-project", command: "Write-Output 'nexus terminal smoke'", shell: "powershell" },
+      { projectId: "test-project", command: "echo nexus terminal smoke", shell: "cmd" },
       true,
       async (id) => ({
         id, name: "test", root, addedAt: new Date().toISOString(), lastIndexedAt: null, indexVersion: 0
@@ -40,7 +40,7 @@ test("PowerShell runs inside a registered project and captures output", {
     processId = started.processId;
     const result = await waitForProcess("test-project", started.processId);
     assert.equal(result.exitCode, 0);
-    assert.match(result.stdout, /nexus terminal smoke/);
+    assert.match(result.stdout, /nexus terminal smoke/i);
     assert.equal(result.timedOut, false);
   } finally {
     if (processId) {
@@ -54,7 +54,7 @@ test("PowerShell runs inside a registered project and captures output", {
   }
 });
 
-test("terminal runner kills a timed out PowerShell process tree", {
+test("PowerShell process timeout terminates the process tree", {
   skip: process.platform !== "win32"
 }, async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "nexus-terminal-timeout-"));
@@ -70,6 +70,7 @@ test("terminal runner kills a timed out PowerShell process tree", {
     processId = started.processId;
     const result = await waitForProcess("test-project", started.processId);
     assert.equal(result.timedOut, true);
+    assert.equal(result.status, "failed");
   } finally {
     if (processId) {
       await cancelCommand("test-project", processId, true);
