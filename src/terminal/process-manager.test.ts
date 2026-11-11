@@ -43,8 +43,13 @@ test("PowerShell runs inside a registered project and captures output", {
     assert.match(result.stdout, /nexus terminal smoke/);
     assert.equal(result.timedOut, false);
   } finally {
-    if (processId) await cancelCommand("test-project", processId, true);
-    await new Promise((resolve) => setTimeout(resolve, 250));
+    if (processId) {
+      await cancelCommand("test-project", processId, true);
+      const deadline = Date.now() + 3_000;
+      while (getOwnedProcess("test-project", processId)?.status === "running" && Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+    }
     await rm(root, { recursive: true, force: true });
   }
 });
@@ -66,8 +71,13 @@ test("terminal runner kills a timed out PowerShell process tree", {
     const result = await waitForProcess("test-project", started.processId);
     assert.equal(result.timedOut, true);
   } finally {
-    if (processId) await cancelCommand("test-project", processId, true);
-    await new Promise((resolve) => setTimeout(resolve, 250));
+    if (processId) {
+      await cancelCommand("test-project", processId, true);
+      const deadline = Date.now() + 3_000;
+      while (getOwnedProcess("test-project", processId)?.status === "running" && Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+    }
     await rm(root, { recursive: true, force: true });
   }
 });
