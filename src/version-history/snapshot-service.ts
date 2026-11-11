@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { lstat, mkdir, open, readFile, realpath, rename, stat, unlink } from "node:fs/promises";
+import { lstat, mkdir, open, readFile, realpath, rename, unlink } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import type { FileSnapshot, ProjectRecord } from "../storage/project-store.js";
@@ -87,7 +87,12 @@ async function saveBytes(projectId: string, relativePath: string, bytes: Buffer,
     reason: reason.slice(0, 256),
     blobKey
   };
-  await projectStore.addSnapshot(snapshot);
+  try {
+    await projectStore.addSnapshot(snapshot);
+  } catch (error) {
+    await unlink(finalPath).catch(() => undefined);
+    throw error;
+  }
   return snapshot;
 }
 
@@ -115,17 +120,63 @@ export async function createFileSnapshot(projectId: string, filePath: string, re
 }
 
 function lineDiff(before: string, after: string, maxLines = 400): { added: string[]; removed: string[]; truncated: boolean } {
-  const beforeLines = before.split(/\r?\n/);
-  const afterLines = after.split(/\r?\n/);
-  const beforeSet = new Set(beforeLines);
-  const afterSet = new Set(afterLines);
-  const removed = beforeLines.filter((line) => !afterSet.has(line)).slice(0, maxLines);
-  const added = afterLines.filter((line) => !beforeSet.has(line)).slice(0, maxLines);
+  const allBefore = before.split(/\r?\n/);
+  const allAfter = after.split(/\r?\n/);
+  const beforeLines = allBefore.slice(0, maxLines);
+  const afterLines = allAfter.slice(0, maxLines);
+  const width = afterLines.length + 1;
+  const table = new Uint16Array((beforeLines.length + 1) * width);
+  for (let i = beforeLines.length - 1; i >= 0; i--) {
+    for (let j = afterLines.length - 1; j >= 0; j--) {
+      const cell = i * width + j;
+      table[cell] = beforeLines[i] === afterLines[j]
+        ? table[(i + 1) * width + j + 1] + 1
+        : Math.max(table[(i + 1) * width + j], table[i * width + j + 1]);
+    }
+  }
+
+  const added: string[] = [];
+  const removed: string[] = [];
+  let i = 0;
+  let j = 0;
+  while (i < beforeLines.length && j < afterLines.length) {
+    if (beforeLines[i] === afterLines[j]) { i++; j++; }
+    else if (table[(i + 1) * width + j] >= table[i * width + j + 1]) removed.push(beforeLines[i++]);
+    else added.push(afterLines[j++]);
+  }
+  removed.push(...beforeLines.slice(i));
+  added.push(...afterLines.slice(j));
   return {
     added,
     removed,
-    truncated: beforeLines.length > maxLines || afterLines.length > maxLines
+    truncated: allBefore.length > maxLines || allAfter.length > maxLines
   };
+}
+
+async function ensureRestoreParent(root: string, relativePath: string): Promise<string> {
+  const parts = path.dirname(relativePath).split("/").filter(Boolean);
+  let parent = root;
+  for (const part of parts) {
+    parent = path.join(parent, part);
+    let info = await lstat(parent).catch((error: unknown) => {
+      if (typeof error === "object" && error !== null && "code" in error &&
+          (error as NodeJS.ErrnoException).code === "ENOENT") return null;
+      throw error;
+    });
+    if (!info) {
+      await mkdir(parent, { mode: 0o700 });
+      info = await lstat(parent);
+    }
+    if (!info.isDirectory() || info.isSymbolicLink()) {
+      throw new Error("Restore parent must be a real directory inside the project");
+    }
+    const resolvedParent = await realpath(parent);
+    const parentRelative = path.relative(root, resolvedParent);
+    if (parentRelative.startsWith("..") || path.isAbsolute(parentRelative)) {
+      throw new Error("Restore target resolves outside the project");
+    }
+  }
+  return parent;
 }
 
 export async function diffFileSnapshot(projectId: string, snapshotId: string): Promise<SnapshotDiff> {
@@ -171,13 +222,7 @@ export async function restoreFileSnapshot(
   const bytes = await readSnapshot(snapshot);
   const root = await realpath(project.root);
   const target = path.resolve(root, normalized);
-  const parent = path.dirname(target);
-  await mkdir(parent, { recursive: true });
-  const realParent = await realpath(parent);
-  const parentRelative = path.relative(root, realParent);
-  if (parentRelative.startsWith("..") || path.isAbsolute(parentRelative)) {
-    throw new Error("Restore target resolves outside the project");
-  }
+  const parent = await ensureRestoreParent(root, normalized);
   const currentInfo = await lstat(target).catch(() => null);
   if (currentInfo?.isSymbolicLink() || (currentInfo && !currentInfo.isFile())) {
     throw new Error("Restore target is not a regular file");
