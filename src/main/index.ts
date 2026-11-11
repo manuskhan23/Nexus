@@ -69,6 +69,45 @@ function registerIpc(): void {
     });
   });
 
+  ipcMain.handle("snapshots:list", async (event, id: unknown, filePath?: unknown) => {
+    assertTrustedRenderer(event);
+    if (typeof id !== "string" || id.length > 64) throw new Error("Invalid project identifier");
+    if (filePath !== undefined && (typeof filePath !== "string" || filePath.length > 4096)) {
+      throw new Error("Invalid project file path");
+    }
+    const query = typeof filePath === "string" ? `?path=${encodeURIComponent(filePath)}` : "";
+    return apiRequest(`/api/projects/${encodeURIComponent(id)}/snapshots${query}`);
+  });
+
+  ipcMain.handle("snapshots:create", async (event, id: unknown, filePath: unknown, reason?: unknown) => {
+    assertTrustedRenderer(event);
+    if (typeof id !== "string" || id.length > 64) throw new Error("Invalid project identifier");
+    if (typeof filePath !== "string" || filePath.length > 4096) throw new Error("Invalid project file path");
+    if (reason !== undefined && (typeof reason !== "string" || reason.length > 256)) throw new Error("Invalid snapshot reason");
+    return apiRequest(`/api/projects/${encodeURIComponent(id)}/snapshots`, {
+      method: "POST",
+      body: JSON.stringify({ path: filePath, reason })
+    });
+  });
+
+  ipcMain.handle("snapshots:diff", async (event, id: unknown, snapshotId: unknown) => {
+    assertTrustedRenderer(event);
+    if (typeof id !== "string" || typeof snapshotId !== "string") throw new Error("Invalid snapshot reference");
+    return apiRequest(`/api/projects/${encodeURIComponent(id)}/snapshots/${encodeURIComponent(snapshotId)}/diff`);
+  });
+
+  ipcMain.handle("snapshots:restore", async (event, id: unknown, snapshotId: unknown, expectedHash: unknown) => {
+    assertTrustedRenderer(event);
+    if (typeof id !== "string" || typeof snapshotId !== "string") throw new Error("Invalid snapshot reference");
+    if (expectedHash !== null && (typeof expectedHash !== "string" || !/^[a-f0-9]{64}$/i.test(expectedHash))) {
+      throw new Error("Refresh the snapshot comparison before restoring");
+    }
+    return apiRequest(`/api/projects/${encodeURIComponent(id)}/snapshots/${encodeURIComponent(snapshotId)}/restore`, {
+      method: "POST",
+      body: JSON.stringify({ expectedCurrentHash: expectedHash })
+    });
+  });
+
   ipcMain.handle("projects:remove", async (event, id: unknown) => {
     assertTrustedRenderer(event);
     if (typeof id !== "string" || id.length > 64) throw new Error("Invalid project identifier");
@@ -106,6 +145,7 @@ async function createWindow(): Promise<void> {
 }
 
 app.whenReady().then(async () => {
+  process.env.NEXUS_DATA_DIR = app.getPath("userData");
   api = await startApiServer(apiToken, 0);
   registerIpc();
   await createWindow();
