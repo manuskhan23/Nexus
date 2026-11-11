@@ -88,3 +88,9 @@ footer { margin-top: auto; padding-top: 40px; }
 .task-steps { display: grid; gap: 8px; padding-left: 24px; color: #aaa; font-size: 11px; }
 .task-steps li { padding-left: 3px; }
 .task-steps button { margin-left: 10px; padding: 4px 8px; }
+
+.task-events { margin-top: 10px; color: #aaa; font-size: 10px; }
+.task-events summary { cursor: pointer; }
+.task-events ul { display: grid; gap: 6px; padding-left: 18px; }
+.task-events time { color: #777; }
+.task-steps small { display: block; margin-top: 3px; }
