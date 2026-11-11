@@ -146,7 +146,7 @@ export async function startCommand(
     pruneHistory();
   });
   child.once("close", (code) => {
-    item.status = "completed";
+    item.status = code === 0 && !item.timedOut ? "completed" : "failed";
     item.exitCode = code;
     item.durationMs = Date.now() - startedAtMs;
     clearTimeout(item.timer);
