@@ -328,6 +328,7 @@ export async function applyEditProposal(projectId: string, id: string): Promise<
 
   const snapshotIds = new Map<string, string>();
   const applied: EditProposalChange[] = [];
+  const moveTargetsCreated = new Set<EditProposalChange>();
   try {
     for (const change of proposal.changes) {
       const current = await findProjectFile(root, change.path);
@@ -354,6 +355,7 @@ export async function applyEditProposal(projectId: string, id: string): Promise<
         const bytes = stagedBytes.get(change);
         if (!bytes) throw new Error("Staged move content is unavailable");
         await atomicWrite(path.join(parent, path.basename(destination)), bytes, current.mode);
+        moveTargetsCreated.add(change);
         await unlink(current.absolute);
       } else if (change.action === "delete") {
         if (current) await unlink(current.absolute);
@@ -378,7 +380,7 @@ export async function applyEditProposal(projectId: string, id: string): Promise<
         if (change.action === "move") {
           const destination = await findProjectFile(root, change.destinationPath!);
           const staged = stagedBytes.get(change);
-          if (destination && staged && hash(destination.bytes) === hash(staged)) {
+          if (moveTargetsCreated.has(change) && destination && staged && hash(destination.bytes) === hash(staged)) {
             await unlink(destination.absolute);
           } else if (destination) {
             rollbackFailures.push(change.destinationPath!);
