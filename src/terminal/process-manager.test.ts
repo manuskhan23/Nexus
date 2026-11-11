@@ -3,27 +3,40 @@ import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { runCommand } from "./process-manager.js";
+import { getOwnedProcess, startCommand } from "./process-manager.js";
 
 test("terminal runner refuses execution unless explicitly approved", async () => {
   await assert.rejects(
-    runCommand({ projectId: "project", command: "echo unsafe", shell: "cmd" }, false),
+    startCommand({ projectId: "project", command: "echo unsafe", shell: "cmd" }, false),
     /Explicit approval is required/
   );
 });
+
+async function waitForProcess(projectId: string, processId: string) {
+  const deadline = Date.now() + 10_000;
+  let result = getOwnedProcess(projectId, processId);
+  while (result?.status === "running" && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    result = getOwnedProcess(projectId, processId);
+  }
+  assert.ok(result, "process state should be available");
+  assert.notEqual(result.status, "running", "process should finish before the test deadline");
+  return result;
+}
 
 test("PowerShell runs inside a registered project and captures output", {
   skip: process.platform !== "win32"
 }, async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "nexus-terminal-"));
   try {
-    const result = await runCommand(
+    const started = await startCommand(
       { projectId: "test-project", command: "Write-Output 'nexus terminal smoke'", shell: "powershell" },
       true,
       async (id) => ({
         id, name: "test", root, addedAt: new Date().toISOString(), lastIndexedAt: null, indexVersion: 0
       })
     );
+    const result = await waitForProcess("test-project", started.processId);
     assert.equal(result.exitCode, 0);
     assert.match(result.stdout, /nexus terminal smoke/);
     assert.equal(result.timedOut, false);
@@ -37,13 +50,14 @@ test("terminal runner kills a timed out PowerShell process tree", {
 }, async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "nexus-terminal-timeout-"));
   try {
-    const result = await runCommand(
+    const started = await startCommand(
       { projectId: "test-project", command: "Start-Sleep -Seconds 5", shell: "powershell", timeoutMs: 1_000 },
       true,
       async (id) => ({
         id, name: "test", root, addedAt: new Date().toISOString(), lastIndexedAt: null, indexVersion: 0
       })
     );
+    const result = await waitForProcess("test-project", started.processId);
     assert.equal(result.timedOut, true);
   } finally {
     await rm(root, { recursive: true, force: true });
