@@ -43,7 +43,14 @@ export function isPrivateIpAddress(address: string): boolean {
   }
   if (kind !== 6) return false;
 
-  const normalized = address.toLowerCase();
+  let normalized = address.toLowerCase();
+  if (normalized.includes(".")) {
+    const lastColon = normalized.lastIndexOf(":");
+    const octets = normalized.slice(lastColon + 1).split(".").map(Number);
+    if (octets.length === 4 && octets.every((part) => Number.isInteger(part) && part >= 0 && part <= 255)) {
+      normalized = `${normalized.slice(0, lastColon + 1)}${((octets[0]! << 8) | octets[1]!).toString(16)}:${((octets[2]! << 8) | octets[3]!).toString(16)}`;
+    }
+  }
   const halves = normalized.split("::");
   if (halves.length > 2) return true;
   const left = halves[0] ? halves[0].split(":") : [];
@@ -53,15 +60,12 @@ export function isPrivateIpAddress(address: string): boolean {
   if (groups.length !== 8 || groups.some((group) => !Number.isInteger(group) || group < 0 || group > 0xffff)) return true;
 
   const first = groups[0]!;
-  const allZeroPrefix = groups.slice(0, 6).every((group) => group === 0);
-  if (allZeroPrefix) {
-    if (groups[6] === 0 && groups[7] <= 1) return true;
-    if (groups[5] === 0xffff) {
-      const mapped = [groups[6]! >> 8, groups[6]! & 0xff, groups[7]! >> 8, groups[7]! & 0xff].join(".");
-      return isPrivateIpAddress(mapped);
-    }
-    return true;
+  if (groups.slice(0, 5).every((group) => group === 0) && groups[5] === 0xffff) {
+    const mapped = [groups[6]! >> 8, groups[6]! & 0xff, groups[7]! >> 8, groups[7]! & 0xff].join(".");
+    return isPrivateIpAddress(mapped);
   }
+  const allZeroPrefix = groups.slice(0, 6).every((group) => group === 0);
+  if (allZeroPrefix) return true;
   return (first & 0xfe00) === 0xfc00 || (first & 0xffc0) === 0xfe80 ||
     (first & 0xff00) === 0xff00 ||
     (first === 0x2001 && groups[1] === 0x0db8) ||
