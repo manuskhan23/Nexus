@@ -72,8 +72,7 @@ export async function generateText(
       // Provider error bodies can echo request metadata; never include them in surfaced errors.
       throw new Error(`${provider} request failed (HTTP ${response.status})`);
     }
-    const responseText = await response.text();
-    if (Buffer.byteLength(responseText, "utf8") > 256_000) throw new Error("AI response payload exceeded the 256000 byte limit");
+    const responseText = await readBoundedBody(response, 256_000);
     let payload: unknown;
     try {
       payload = JSON.parse(responseText) as unknown;
@@ -94,6 +93,34 @@ export async function generateText(
   } finally {
     clearTimeout(timer);
   }
+}
+
+async function readBoundedBody(response: Response, maxBytes: number): Promise<string> {
+  if (!response.body) throw new Error("Provider returned an empty response body");
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > maxBytes) {
+        await reader.cancel().catch(() => undefined);
+        throw new Error("AI response payload exceeded the 256000 byte limit");
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  const bytes = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return new TextDecoder().decode(bytes);
 }
 
 function extractGeminiText(payload: unknown): string {
