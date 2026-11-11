@@ -5,6 +5,7 @@ import path from "node:path";
 import { searchProjectContext } from "../context/context-service.js";
 import { scanProject } from "../project-intelligence/scanner.js";
 import { watchProject, unwatchProject } from "../project-intelligence/watcher.js";
+import { createFileSnapshot, diffFileSnapshot, restoreFileSnapshot } from "../version-history/snapshot-service.js";
 import { projectStore } from "../storage/project-store.js";
 
 export function createApiApp(apiToken: string): express.Express {
@@ -14,7 +15,7 @@ export function createApiApp(apiToken: string): express.Express {
   app.disable("x-powered-by");
   app.use(express.json({ limit: "32kb" }));
   app.get("/health", (_request, response) => {
-    response.json({ status: "ok", service: "nexus-api", phase: 2 });
+    response.json({ status: "ok", service: "nexus-api", phase: 4 });
   });
 
   app.use("/api", (request, response, next) => {
@@ -92,6 +93,62 @@ export function createApiApp(apiToken: string): express.Express {
     } catch (error) {
       const message = error instanceof Error ? error.message : "Context search failed";
       const status = message === "Project not found" ? 404 : 400;
+      response.status(status).json({ error: message });
+    }
+  });
+
+  app.get("/api/projects/:id/snapshots", async (request, response) => {
+    const project = await projectStore.get(request.params.id);
+    if (!project) {
+      response.status(404).json({ error: "Project not found" });
+      return;
+    }
+    response.json({ snapshots: await projectStore.listSnapshots(project.id, request.query.path as string | undefined) });
+  });
+
+  app.post("/api/projects/:id/snapshots", async (request, response) => {
+    const filePath: unknown = request.body?.path;
+    const reason: unknown = request.body?.reason;
+    if (typeof filePath !== "string" || filePath.length > 4096 ||
+        (reason !== undefined && typeof reason !== "string")) {
+      response.status(400).json({ error: "A valid project-relative path is required" });
+      return;
+    }
+    try {
+      response.status(201).json(await createFileSnapshot(request.params.id, filePath, reason as string | undefined));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Snapshot creation failed";
+      const status = message === "Project not found" ? 404 : 400;
+      response.status(status).json({ error: message });
+    }
+  });
+
+  app.get("/api/projects/:id/snapshots/:snapshotId/diff", async (request, response) => {
+    try {
+      response.json(await diffFileSnapshot(request.params.id, request.params.snapshotId));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Snapshot diff failed";
+      const status = message === "Project not found" || message === "Snapshot not found" ? 404 : 400;
+      response.status(status).json({ error: message });
+    }
+  });
+
+  app.post("/api/projects/:id/snapshots/:snapshotId/restore", async (request, response) => {
+    const expectedCurrentHash: unknown = request.body?.expectedCurrentHash;
+    if (expectedCurrentHash !== null &&
+        (typeof expectedCurrentHash !== "string" || !/^[a-f0-9]{64}$/i.test(expectedCurrentHash))) {
+      response.status(400).json({ error: "A current-file hash from the latest diff is required" });
+      return;
+    }
+    try {
+      response.json(await restoreFileSnapshot(
+        request.params.id,
+        request.params.snapshotId,
+        expectedCurrentHash as string | null
+      ));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Snapshot restore failed";
+      const status = message === "Project not found" || message === "Snapshot not found" ? 404 : 409;
       response.status(status).json({ error: message });
     }
   });
