@@ -23,7 +23,7 @@ declare global {
         list(projectId: string): Promise<unknown>;
         propose(projectId: string, title: string, changes: unknown[]): Promise<unknown>;
         get(projectId: string, proposalId: string): Promise<unknown>;
-        apply(projectId: string, proposalId: string): Promise<unknown>;
+        apply(projectId: string, proposalId: string, approvalGranted: boolean): Promise<unknown>;
         reject(projectId: string, proposalId: string): Promise<boolean>;
       };
       tasks: {
