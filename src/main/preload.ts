@@ -21,6 +21,7 @@ const terminal = Object.freeze({
   run: (projectId: string, input: unknown, approvalGranted: boolean) =>
     ipcRenderer.invoke("terminal:run", projectId, input, approvalGranted),
   listProcesses: (projectId: string) => ipcRenderer.invoke("terminal:processes", projectId),
+  getProcess: (projectId: string, processId: string) => ipcRenderer.invoke("terminal:get", projectId, processId),
   cancel: (projectId: string, processId: string, approvalGranted: boolean) =>
     ipcRenderer.invoke("terminal:cancel", projectId, processId, approvalGranted)
 });
