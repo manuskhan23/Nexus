@@ -62,3 +62,20 @@ test("registry aborts timed out operations and rejects duplicate registrations",
     /timed out/
   );
 });
+
+test("tool failure audit events redact credential values", async () => {
+  const events: Array<{ status: string; error?: string }> = [];
+  const registry = new ToolRegistry((event) => { events.push(event); });
+  registry.register({
+    id: "test.failure",
+    name: "Failing test",
+    description: "Emit a sanitized failure",
+    risk: "low",
+    timeoutMs: 1000,
+    validate: (input) => input,
+    async execute() { throw new Error("password=hunter2"); }
+  });
+  await assert.rejects(registry.execute("test.failure", {}, { projectId: "project", approved: false }));
+  assert.equal(events.at(-1)?.status, "failed");
+  assert.equal(events.at(-1)?.error, "password=[redacted]");
+});
