@@ -4,7 +4,7 @@ A secure, project-aware desktop engineering agent. Development follows the depen
 
 ## Repository audit
 
-This repository was empty when work began: no source files, package manifests, dependencies, tests, or existing architecture were present. There is therefore no existing implementation to preserve or audit. This first commit establishes the project record and roadmap.
+This repository was empty when work began: no source files, package manifests, dependencies, tests, or existing architecture were present. There is no existing implementation to preserve. The audit and initial roadmap are documented here.
 
 ## Architecture direction
 
@@ -41,8 +41,10 @@ This repository was empty when work began: no source files, package manifests, d
 
 - **Audit:** Complete; repository was empty.
 - **Roadmap:** Documented above.
-- **Phase 1:** Not yet implemented.
+- **Phase 1:** In progress. A bounded scanner returns file metadata, SHA-256 hashes, language counts, package scripts/dependencies/framework hints, and skip counts. An Express endpoint exposes the scan.
+- **Phase 1 remaining:** Project registration/storage, incremental index persistence and watchers, user-selected-directory integration, frontend/Electron integration, stronger ignore semantics, and verification.
 - **Other phases:** Not implemented.
+- **Verification:** Not run; this review branch was authored through GitHub and no local checkout/runtime was available.
 - **Production readiness:** No.
 
-The next implementation slice is the Phase 1 project intelligence foundation. Each slice will be developed on a review branch and marked complete only after its acceptance criteria are verified.
+The current scanner is an initial implementation slice, not a completed project intelligence engine. Local API access controls and UI-mediated path selection must be added before exposing project scanning in the desktop app.
