@@ -126,6 +126,16 @@ interface Task {
 }
 interface TaskList { tasks: Task[] }
 interface GeneratedPlanStep { title: string; description: string; dependencies: number[] }
+interface MemoryView {
+  id: string;
+  projectId: string | null;
+  title: string;
+  content: string;
+  enabled: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+interface MemoryList { memories: MemoryView[] }
 interface TerminalResult {
   processId: string;
   status: "running" | "completed" | "failed";
@@ -186,6 +196,11 @@ export function App() {
   const [providerCredentials, setProviderCredentials] = useState<Record<"gemini" | "groq", string>>({ gemini: "", groq: "" });
   const [providerModels, setProviderModels] = useState<Record<"gemini" | "groq", string>>({ gemini: "", groq: "" });
   const [providerTestResult, setProviderTestResult] = useState("");
+  const [memoryTitle, setMemoryTitle] = useState("");
+  const [memoryContent, setMemoryContent] = useState("");
+  const [memoryScope, setMemoryScope] = useState<"user" | "project">("project");
+  const [editingMemoryId, setEditingMemoryId] = useState("");
+  const [memoriesByProject, setMemoriesByProject] = useState<Record<string, MemoryView[]>>({});
   const [terminalProcesses, setTerminalProcesses] = useState<Record<string, TerminalResult[]>>({});
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -387,6 +402,71 @@ export function App() {
       const result = await window.nexus.terminal.listProcesses(project.id) as TerminalProcesses;
       setTerminalProcesses((current) => ({ ...current, [project.id]: result.processes }));
     });
+  }
+
+  function loadMemories(project: Project) {
+    return run(async () => {
+      const result = await window.nexus.memories.list(project.id) as MemoryList;
+      setMemoriesByProject((current) => ({ ...current, [project.id]: result.memories }));
+    });
+  }
+
+  function saveMemory(project: Project) {
+    return run(async () => {
+      if (editingMemoryId) {
+        await window.nexus.memories.update(project.id, editingMemoryId, {
+          title: memoryTitle, content: memoryContent
+        });
+      } else {
+        await window.nexus.memories.create(project.id, memoryScope, memoryTitle, memoryContent);
+      }
+      const result = await window.nexus.memories.list(project.id) as MemoryList;
+      setMemoriesByProject((current) => ({ ...current, [project.id]: result.memories }));
+      setMemoryTitle("");
+      setMemoryContent("");
+      setEditingMemoryId("");
+      setNotice("Memory saved. Enabled memories may be included as untrusted context in AI plans.");
+    });
+  }
+
+  function toggleMemory(project: Project, memory: MemoryView) {
+    return run(async () => {
+      await window.nexus.memories.update(project.id, memory.id, { enabled: !memory.enabled });
+      const result = await window.nexus.memories.list(project.id) as MemoryList;
+      setMemoriesByProject((current) => ({ ...current, [project.id]: result.memories }));
+    });
+  }
+
+  function deleteMemory(project: Project, memory: MemoryView) {
+    return run(async () => {
+      if (!window.confirm(`Delete memory "${memory.title}"?`)) return;
+      await window.nexus.memories.remove(project.id, memory.id);
+      setMemoriesByProject((current) => ({
+        ...current,
+        [project.id]: (current[project.id] ?? []).filter((item) => item.id !== memory.id)
+      }));
+      if (editingMemoryId === memory.id) {
+        setEditingMemoryId("");
+        setMemoryTitle("");
+        setMemoryContent("");
+      }
+      setNotice("Memory deleted.");
+    });
+  }
+
+  function exportMemories(project: Project) {
+    return run(async () => {
+      if (!window.confirm(`Export user and ${project.name} memories to a JSON file?`)) return;
+      const saved = await window.nexus.memories.export(project.id);
+      if (saved) setNotice("Memory JSON export saved.");
+    });
+  }
+
+  function editMemory(memory: MemoryView) {
+    setEditingMemoryId(memory.id);
+    setMemoryTitle(memory.title);
+    setMemoryContent(memory.content);
+    setMemoryScope(memory.projectId === null ? "user" : "project");
   }
 
   function startBrowser(project: Project) {
@@ -744,6 +824,50 @@ export function App() {
               </section>
 
                             <section className="task-panel">
+                <div className="project-heading">
+                  <div>
+                    <h3>Memory</h3>
+                    <p className="muted small">Inspect and edit user or project notes. Secret-like values are rejected; enabled memories may be sent as untrusted context during confirmed AI planning.</p>
+                  </div>
+                  <div className="actions">
+                    <button className="text-button" onClick={() => void loadMemories(project)} disabled={busy}>Refresh</button>
+                    <button className="text-button" onClick={() => void exportMemories(project)} disabled={busy}>Export JSON</button>
+                  </div>
+                </div>
+                <div className="task-form">
+                  <select value={memoryScope} onChange={(event) => setMemoryScope(event.target.value as typeof memoryScope)} aria-label="Memory scope">
+                    <option value="project">This project</option>
+                    <option value="user">User memory</option>
+                  </select>
+                  <input value={memoryTitle} onChange={(event) => setMemoryTitle(event.target.value)}
+                    maxLength={120} placeholder="Memory title" aria-label="Memory title" />
+                  <textarea value={memoryContent} onChange={(event) => setMemoryContent(event.target.value)}
+                    maxLength={4000} placeholder="A preference or project fact to remember" aria-label="Memory content" />
+                  <div className="actions">
+                    <button className="secondary-button" onClick={() => void saveMemory(project)} disabled={busy || !memoryTitle.trim() || !memoryContent.trim()}>
+                      {editingMemoryId ? "Save memory changes" : "Add memory"}
+                    </button>
+                    {editingMemoryId && <button className="text-button" onClick={() => { setEditingMemoryId(""); setMemoryTitle(""); setMemoryContent(""); }}>Cancel edit</button>}
+                  </div>
+                </div>
+                {(memoriesByProject[project.id] ?? []).length === 0 ? <p className="muted small">Load memories to view saved user and project notes.</p> :
+                  (memoriesByProject[project.id] ?? []).map((memory) => (
+                    <div className="snapshot-row" key={memory.id}>
+                      <div className="snapshot-meta">
+                        <strong>{memory.title} · {memory.projectId === null ? "USER" : "PROJECT"} · {memory.enabled ? "ENABLED" : "DISABLED"}</strong>
+                        <p>{memory.content}</p>
+                        <span>Updated {new Date(memory.updatedAt).toLocaleString()}</span>
+                      </div>
+                      <div className="snapshot-buttons">
+                        <button className="text-button" onClick={() => editMemory(memory)} disabled={busy}>Edit</button>
+                        <button className="text-button" onClick={() => void toggleMemory(project, memory)} disabled={busy}>{memory.enabled ? "Disable" : "Enable"}</button>
+                        <button className="text-button" onClick={() => void deleteMemory(project, memory)} disabled={busy}>Delete</button>
+                      </div>
+                    </div>
+                  ))}
+              </section>
+
+              <section className="task-panel">
                 <h3>Isolated browser</h3>
                 <p className="muted small">Headless Chromium with bounded text snapshots. Navigation, clicks, form fills, and closing require confirmation; page text is untrusted.</p>
                 <div className="task-form">
