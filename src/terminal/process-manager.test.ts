@@ -38,7 +38,6 @@ test("PowerShell runs inside a registered project and captures output", {
       })
     );
     processId = started.processId;
-    processId = started.processId;
     const result = await waitForProcess("test-project", started.processId);
     assert.equal(result.exitCode, 0);
     assert.match(result.stdout, /nexus terminal smoke/);
@@ -63,6 +62,7 @@ test("terminal runner kills a timed out PowerShell process tree", {
         id, name: "test", root, addedAt: new Date().toISOString(), lastIndexedAt: null, indexVersion: 0
       })
     );
+    processId = started.processId;
     const result = await waitForProcess("test-project", started.processId);
     assert.equal(result.timedOut, true);
   } finally {
