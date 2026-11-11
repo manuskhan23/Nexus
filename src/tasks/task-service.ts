@@ -86,8 +86,8 @@ export async function createTask(
   const stepIds = plan.map(() => randomUUID());
   const steps: TaskStepRecord[] = plan.map((step, index) => ({
     id: stepIds[index],
-    title: step.title.trim(),
-    description: (step.description ?? "").trim(),
+    title: redactSecrets(step.title.trim()),
+    description: redactSecrets((step.description ?? "").trim()),
     dependencies: (step.dependencies ?? []).map((dependency) => stepIds[dependency]),
     status: "pending"
   }));
