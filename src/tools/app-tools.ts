@@ -7,6 +7,7 @@ import {
 } from "../code-editing/edit-service.js";
 import { projectStore } from "../storage/project-store.js";
 import { ToolRegistry } from "./tool-registry.js";
+import { registerTerminalTools } from "../terminal/register-tools.js";
 
 function objectInput(input: unknown): Record<string, unknown> {
   if (!input || typeof input !== "object" || Array.isArray(input)) throw new Error("Tool input must be an object");
@@ -83,3 +84,5 @@ toolRegistry.register({
     return { rejected: true };
   }
 });
+
+registerTerminalTools(toolRegistry);
