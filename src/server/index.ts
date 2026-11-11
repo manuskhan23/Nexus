@@ -1,10 +1,14 @@
 import { startApiServer, type RunningApi } from "./runtime.js";
 
-const apiToken = process.env.NEXUS_API_TOKEN;
-if (!apiToken || apiToken.length < 32) {
-  throw new Error("Set NEXUS_API_TOKEN to a random value of at least 32 characters");
+function requireApiToken(): string {
+  const token = process.env.NEXUS_API_TOKEN;
+  if (!token || token.length < 32) {
+    throw new Error("Set NEXUS_API_TOKEN to a random value of at least 32 characters");
+  }
+  return token;
 }
 
+const apiToken = requireApiToken();
 let running: RunningApi | undefined;
 
 async function start(): Promise<void> {
