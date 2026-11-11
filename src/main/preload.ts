@@ -26,6 +26,21 @@ const terminal = Object.freeze({
     ipcRenderer.invoke("terminal:cancel", projectId, processId, approvalGranted)
 });
 
+const browser = Object.freeze({
+  start: (projectId: string, approvalGranted: boolean) =>
+    ipcRenderer.invoke("browser:start", projectId, approvalGranted),
+  navigate: (projectId: string, sessionId: string, url: string, approvalGranted: boolean) =>
+    ipcRenderer.invoke("browser:navigate", projectId, sessionId, url, approvalGranted),
+  snapshot: (projectId: string, sessionId: string) =>
+    ipcRenderer.invoke("browser:snapshot", projectId, sessionId),
+  click: (projectId: string, sessionId: string, selector: string, approvalGranted: boolean) =>
+    ipcRenderer.invoke("browser:click", projectId, sessionId, selector, approvalGranted),
+  fill: (projectId: string, sessionId: string, selector: string, value: string, approvalGranted: boolean) =>
+    ipcRenderer.invoke("browser:fill", projectId, sessionId, selector, value, approvalGranted),
+  close: (projectId: string, sessionId: string, approvalGranted: boolean) =>
+    ipcRenderer.invoke("browser:close", projectId, sessionId, approvalGranted)
+});
+
 const tasks = Object.freeze({
   list: (projectId: string) => ipcRenderer.invoke("tasks:list", projectId),
   create: (projectId: string, input: unknown) => ipcRenderer.invoke("tasks:create", projectId, input),
@@ -49,4 +64,4 @@ const edits = Object.freeze({
   reject: (projectId: string, proposalId: string) => ipcRenderer.invoke("edits:reject", projectId, proposalId)
 });
 
-contextBridge.exposeInMainWorld("nexus", Object.freeze({ projects, snapshots, files, edits, tasks, terminal }));
+contextBridge.exposeInMainWorld("nexus", Object.freeze({ projects, snapshots, files, edits, tasks, terminal, browser }));
