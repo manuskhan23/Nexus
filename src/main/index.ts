@@ -1,5 +1,7 @@
 import { randomBytes } from "node:crypto";
-import { app, BrowserWindow, dialog, ipcMain, type IpcMainInvokeEvent } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, safeStorage, type IpcMainInvokeEvent } from "electron";
+import { readFile, writeFile, rename, mkdir } from "node:fs/promises";
+import { setProviderCredential, getProviderStatuses, type AIProviderId } from "../ai/provider-service.js";
 import path from "node:path";
 import { startApiServer, type RunningApi } from "../server/runtime.js";
 
@@ -34,7 +36,66 @@ async function apiRequest<T>(route: string, init?: RequestInit): Promise<T> {
   return await response.json() as T;
 }
 
+async function loadProviderCredentials(): Promise<void> {
+  const file = path.join(app.getPath("userData"), "provider-credentials.json");
+  let encoded: Record<string, string>;
+  try {
+    encoded = JSON.parse(await readFile(file, "utf8")) as Record<string, string>;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+    throw new Error("Stored provider credentials could not be read");
+  }
+  if (!safeStorage.isEncryptionAvailable()) throw new Error("OS-backed credential encryption is unavailable");
+  for (const provider of ["gemini", "groq"] as const) {
+    const value = encoded[provider];
+    if (typeof value !== "string") continue;
+    try {
+      setProviderCredential(provider, safeStorage.decryptString(Buffer.from(value, "base64")));
+    } catch {
+      throw new Error(`Stored ${provider} credential could not be decrypted on this account`);
+    }
+  }
+}
+
+async function saveProviderCredential(provider: AIProviderId, credential: string | null): Promise<void> {
+  if (!safeStorage.isEncryptionAvailable()) throw new Error("OS-backed credential encryption is unavailable");
+  const file = path.join(app.getPath("userData"), "provider-credentials.json");
+  const encoded: Record<string, string> = {};
+  try {
+    Object.assign(encoded, JSON.parse(await readFile(file, "utf8")) as Record<string, string>);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw new Error("Stored provider credentials could not be read");
+  }
+  if (credential === null) delete encoded[provider];
+  else encoded[provider] = safeStorage.encryptString(credential).toString("base64");
+  await mkdir(path.dirname(file), { recursive: true });
+  const temporary = `${file}.${randomBytes(8).toString("hex")}.tmp`;
+  try {
+    await writeFile(temporary, JSON.stringify(encoded), { encoding: "utf8", mode: 0o600, flag: "wx" });
+    await rename(temporary, file);
+  } catch (error) {
+    await import("node:fs/promises").then(({ unlink }) => unlink(temporary).catch(() => undefined));
+    throw error;
+  }
+  setProviderCredential(provider, credential);
+}
+
 function registerIpc(): void {
+  ipcMain.handle("settings:providers", async (event) => {
+    assertTrustedRenderer(event);
+    return { providers: getProviderStatuses(), encryptionAvailable: safeStorage.isEncryptionAvailable() };
+  });
+
+  ipcMain.handle("settings:provider-credential", async (event, provider: unknown, credential: unknown) => {
+    assertTrustedRenderer(event);
+    if ((provider !== "gemini" && provider !== "groq") ||
+        (credential !== null && (typeof credential !== "string" || credential.length > 4096))) {
+      throw new Error("Invalid provider credential");
+    }
+    await saveProviderCredential(provider, credential as string | null);
+    return { providers: getProviderStatuses() };
+  });
+
   ipcMain.handle("projects:choose", async (event) => {
     assertTrustedRenderer(event);
     const result = await dialog.showOpenDialog(windowRef!, {
@@ -345,6 +406,7 @@ async function createWindow(): Promise<void> {
 
 app.whenReady().then(async () => {
   process.env.NEXUS_DATA_DIR = app.getPath("userData");
+  await loadProviderCredentials();
   api = await startApiServer(apiToken, 0);
   registerIpc();
   await createWindow();
