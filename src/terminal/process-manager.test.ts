@@ -54,14 +54,14 @@ test("CMD runs inside a registered project and captures output", {
   }
 });
 
-test("PowerShell can exit normally", {
+test("PowerShell captures output and exits normally", {
   skip: process.platform !== "win32"
 }, async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "nexus-terminal-powershell-"));
   let processId: string | undefined;
   try {
     const started = await startCommand(
-      { projectId: "test-project", command: "exit 0", shell: "powershell", timeoutMs: 5_000 },
+      { projectId: "test-project", command: "Write-Output 'nexus PowerShell smoke'", shell: "powershell", timeoutMs: 5_000 },
       true,
       async (id) => ({
         id, name: "test", root, addedAt: new Date().toISOString(), lastIndexedAt: null, indexVersion: 0
@@ -70,6 +70,7 @@ test("PowerShell can exit normally", {
     processId = started.processId;
     const result = await waitForProcess("test-project", started.processId);
     assert.equal(result.exitCode, 0, JSON.stringify(result));
+    assert.match(result.stdout, /nexus PowerShell smoke/);
     assert.equal(result.status, "completed");
   } finally {
     if (processId) {
