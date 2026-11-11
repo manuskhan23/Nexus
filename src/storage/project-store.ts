@@ -199,14 +199,17 @@ export const projectStore = {
     snapshotIds?: string[]
   ): Promise<void> {
     const { editProposals } = await collections();
-    const set: Record<string, unknown> = {
+    const set = {
       status,
       completedAt,
       ...(failureMessage ? { failureMessage: failureMessage.slice(0, 500) } : {}),
       ...(snapshotIds ? { snapshotIds } : {})
     };
-    const update = failureMessage ? { $set: set } : { $set: set, $unset: { failureMessage: "" } };
-    await editProposals.updateOne({ projectId, id }, update);
+    if (failureMessage) {
+      await editProposals.updateOne({ projectId, id }, { $set: set });
+    } else {
+      await editProposals.updateOne({ projectId, id }, { $set: set, $unset: { failureMessage: "" as const } });
+    }
   },
   async close(): Promise<void> {
     await client?.close();
