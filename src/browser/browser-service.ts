@@ -28,45 +28,55 @@ interface BrowserSession {
 }
 
 const sessions = new Map<string, BrowserSession>();
-const privateHostCache = new Map<string, boolean>();
 
-function isPrivateIp(address: string): boolean {
+export function isPrivateIpAddress(address: string): boolean {
   const kind = isIP(address);
   if (kind === 4) {
-    const [a, b] = address.split(".").map(Number);
+    const [a, b, c] = address.split(".").map(Number);
     return a === 0 || a === 10 || a === 127 || a >= 224 ||
       (a === 169 && b === 254) || (a === 172 && b >= 16 && b <= 31) ||
-      (a === 192 && b === 168) || (a === 100 && b >= 64 && b <= 127);
+      (a === 192 && (b === 168 || (b === 0 && c === 0) || (b === 0 && c === 2) ||
+        (b === 88 && c === 99) || (b === 168 && c === 0))) ||
+      (a === 100 && b >= 64 && b <= 127) ||
+      (a === 198 && ((b === 18 || b === 19) || (b === 51 && c === 100))) ||
+      (a === 203 && b === 0 && c === 113);
   }
-  if (kind === 6) {
-    const normalized = address.toLowerCase();
-    return normalized === "::1" || normalized === "::" || normalized.startsWith("fc") ||
-      normalized.startsWith("fd") || normalized.startsWith("fe8") ||
-      normalized.startsWith("fe9") || normalized.startsWith("fea") ||
-      normalized.startsWith("feb") || normalized.startsWith("::ffff:127.");
+  if (kind !== 6) return false;
+
+  const normalized = address.toLowerCase();
+  const halves = normalized.split("::");
+  if (halves.length > 2) return true;
+  const left = halves[0] ? halves[0].split(":") : [];
+  const right = halves[1] ? halves[1].split(":") : [];
+  const groups = [...left, ...Array(Math.max(0, 8 - left.length - right.length)).fill("0"), ...right]
+    .map((group) => Number.parseInt(group || "0", 16));
+  if (groups.length !== 8 || groups.some((group) => !Number.isInteger(group) || group < 0 || group > 0xffff)) return true;
+
+  const first = groups[0]!;
+  const allZeroPrefix = groups.slice(0, 6).every((group) => group === 0);
+  if (allZeroPrefix) {
+    if (groups[6] === 0 && groups[7] <= 1) return true;
+    if (groups[5] === 0xffff) {
+      const mapped = [groups[6]! >> 8, groups[6]! & 0xff, groups[7]! >> 8, groups[7]! & 0xff].join(".");
+      return isPrivateIpAddress(mapped);
+    }
+    return true;
   }
-  return false;
+  return (first & 0xfe00) === 0xfc00 || (first & 0xffc0) === 0xfe80 ||
+    (first & 0xff00) === 0xff00 ||
+    (first === 0x2001 && groups[1] === 0x0db8) ||
+    (first === 0x2001 && groups[1] === 0x0010);
 }
 
 async function isPrivateHost(hostname: string): Promise<boolean> {
-  const host = hostname.toLowerCase().replace(/^\[|\]$/g, "");
-  if (privateHostCache.has(host)) return privateHostCache.get(host)!;
-  if (host === "localhost" || host.endsWith(".localhost") || host.endsWith(".local")) {
-    privateHostCache.set(host, true);
-    return true;
-  }
-  if (isIP(host)) {
-    const result = isPrivateIp(host);
-    privateHostCache.set(host, result);
-    return result;
-  }
+  const host = hostname.toLowerCase().replace(/^\\[|\\]$/g, "");
+  if (host === "localhost" || host.endsWith(".localhost") || host.endsWith(".local")) return true;
+  if (isIP(host)) return isPrivateIpAddress(host);
   try {
     const addresses = await lookup(host, { all: true, verbatim: true });
-    const result = addresses.length === 0 || addresses.some(({ address }) => isPrivateIp(address));
-    privateHostCache.set(host, result);
-    return result;
+    // Block the name if any answer is private. Resolve on every request to narrow DNS rebinding windows.
+    return addresses.length === 0 || addresses.some(({ address }) => isPrivateIpAddress(address));
   } catch {
-    privateHostCache.set(host, true);
     return true;
   }
 }
