@@ -160,9 +160,10 @@ export async function transitionTaskStep(
     skipped: []
   };
   if (!allowed[step.status].includes(next)) throw new Error(`Invalid step transition: ${step.status} to ${next}`);
-  if (next === "running" && step.dependencies.some((dependency) =>
-    task.steps.find((candidate) => candidate.id === dependency)?.status !== "completed"
-  )) throw new Error("Complete the step dependencies first");
+  if (next === "running" && step.dependencies.some((dependency) => {
+    const status = task.steps.find((candidate) => candidate.id === dependency)?.status;
+    return status !== "completed" && status !== "skipped";
+  })) throw new Error("Complete the step dependencies first");
   if (next === "running" && task.steps.some((candidate) => candidate.status === "running")) {
     throw new Error("Finish the current running step first");
   }
