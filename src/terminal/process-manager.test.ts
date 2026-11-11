@@ -69,7 +69,7 @@ test("PowerShell can exit normally", {
     );
     processId = started.processId;
     const result = await waitForProcess("test-project", started.processId);
-    assert.equal(result.exitCode, 0);
+    assert.equal(result.exitCode, 0, JSON.stringify(result));
     assert.equal(result.status, "completed");
   } finally {
     if (processId) {
