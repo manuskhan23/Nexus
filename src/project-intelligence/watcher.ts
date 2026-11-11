@@ -20,7 +20,7 @@ async function rebuild(project: ProjectRecord): Promise<void> {
 
 async function applyChange(project: ProjectRecord, relativePath: string): Promise<void> {
   const normalized = relativePath.replaceAll(path.sep, "/");
-  if (FULL_RESCAN_FILES.has(normalized)) {
+  if (FULL_RESCAN_FILES.has(normalized) || normalized.endsWith("/.gitignore")) {
     await rebuild(project);
     return;
   }
