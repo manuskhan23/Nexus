@@ -37,8 +37,18 @@ async function getProjectFile(project: ProjectRecord, relativePath: string): Pro
     throw new Error("File path is outside the project");
   }
   try {
+    let cursor = root;
+    const parts = normalized.split("/");
+    for (const [index, part] of parts.entries()) {
+      cursor = path.join(cursor, part);
+      const component = await lstat(cursor);
+      if (component.isSymbolicLink()) throw new Error("Symbolic links cannot be snapshotted");
+      if (index < parts.length - 1 && !component.isDirectory()) {
+        throw new Error("Snapshot path parent is not a directory");
+      }
+    }
     const info = await lstat(absolute);
-    if (!info.isFile() || info.isSymbolicLink()) throw new Error("Only regular project files can be snapshotted");
+    if (!info.isFile()) throw new Error("Only regular project files can be snapshotted");
     if (info.size > MAX_SNAPSHOT_BYTES) throw new Error("File is too large to snapshot");
     const actualPath = await realpath(absolute);
     const actualRelative = path.relative(root, actualPath);
