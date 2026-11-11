@@ -29,6 +29,7 @@ declare global {
       terminal: {
         run(projectId: string, input: unknown, approvalGranted: boolean): Promise<unknown>;
         listProcesses(projectId: string): Promise<unknown>;
+        getProcess(projectId: string, processId: string): Promise<unknown>;
         cancel(projectId: string, processId: string, approvalGranted: boolean): Promise<unknown>;
       };
       tasks: {
