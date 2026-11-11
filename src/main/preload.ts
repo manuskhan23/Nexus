@@ -52,6 +52,7 @@ const browser = Object.freeze({
 const tasks = Object.freeze({
   list: (projectId: string) => ipcRenderer.invoke("tasks:list", projectId),
   create: (projectId: string, input: unknown) => ipcRenderer.invoke("tasks:create", projectId, input),
+  plan: (projectId: string, input: unknown, approvalGranted: boolean) => ipcRenderer.invoke("tasks:plan", projectId, input, approvalGranted),
   setStatus: (projectId: string, taskId: string, status: string, note?: string) =>
     ipcRenderer.invoke("tasks:status", projectId, taskId, status, note),
   setStep: (projectId: string, taskId: string, stepId: string, status: string, result?: string) =>
