@@ -3,6 +3,7 @@ import { realpath } from "node:fs/promises";
 import express from "express";
 import path from "node:path";
 import { scanProject } from "../project-intelligence/scanner.js";
+import { stopProjectWatchers, unwatchProject, watchProject, watchProjects } from "../project-intelligence/watcher.js";
 import { projectStore } from "../storage/project-store.js";
 
 const app = express();
@@ -36,7 +37,9 @@ app.post("/api/projects", async (request, response) => {
     };
     await projectStore.add(project);
     await projectStore.saveIndex(project.id, scan.files, scan.scannedAt);
-    response.status(201).json({ project: await projectStore.get(project.id), scan });
+    const storedProject = await projectStore.get(project.id);
+    if (storedProject) watchProject(storedProject);
+    response.status(201).json({ project: storedProject, scan });
   } catch (error) {
     const mongoCode = typeof error === "object" && error !== null && "code" in error
       ? (error as { code?: number }).code : undefined;
@@ -69,17 +72,22 @@ app.delete("/api/projects/:id", async (request, response) => {
     response.status(404).json({ error: "Project not found" });
     return;
   }
+  unwatchProject(request.params.id);
   response.status(204).end();
 });
 
 const port = Number(process.env.NEXUS_API_PORT ?? 3001);
 
 async function start(): Promise<void> {
-  await projectStore.list();
+  const projects = await projectStore.list();
+  watchProjects(projects);
   app.listen(port, "127.0.0.1", () => {
     console.log(JSON.stringify({ event: "server.started", port, host: "127.0.0.1" }));
   });
 }
+
+process.once("SIGINT", () => stopProjectWatchers());
+process.once("SIGTERM", () => stopProjectWatchers());
 
 start().catch((error: unknown) => {
   console.error(JSON.stringify({
