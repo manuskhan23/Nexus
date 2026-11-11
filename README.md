@@ -4,7 +4,7 @@ A secure, project-aware desktop engineering agent built incrementally from its m
 
 ## Audit and architecture
 
-The repository was empty at the start. The planned stack is Electron main/preload, a React TypeScript renderer, an Express API, MongoDB for structured state, filesystem snapshots/artifacts, and only Google Gemini and Groq as AI providers.
+The repository was empty at the start. The stack is Electron main/preload, a React TypeScript renderer, an Express API, MongoDB for structured state, filesystem snapshots/artifacts, and only Google Gemini and Groq as AI providers.
 
 ## Roadmap
 
@@ -29,12 +29,12 @@ The repository was empty at the start. The planned stack is Electron main/preloa
 
 ## Status
 
-- Audit and roadmap: complete.
-- Phase 1: scanner, MongoDB project registry/file index, REST project CRUD, and watcher-driven per-file updates are in progress.
-- Full directory rescans occur for directory changes, missing filenames, ignore-file changes, and key package manifests.
-- Remaining: Electron-mediated folder selection, renderer integration, access controls, complete ignore semantics, and verification.
-- Other phases are not implemented. The product is not production-ready.
+- Phase 1 includes bounded metadata scanning, MongoDB project/file records, project REST operations, debounced watcher updates, and a monochrome React project screen.
+- Electron main opens the folder picker; the renderer receives only project operations through a restricted preload API. The API uses a per-launch token held in main.
+- Full rescans handle directory changes, missing filenames, ignore-file changes, and key manifests. Ordinary file changes update a single metadata record.
+- Remaining: complete ignore semantics, robust watcher recovery, provider integrations, and local build/runtime verification.
+- Phases 2–16 are not implemented. The product is not production-ready.
 
-Set MONGODB_URI in the server process environment. MONGODB_DATABASE is optional and defaults to nexus. Never commit credentials.
+Set MONGODB_URI in the environment available to the Electron process. MONGODB_DATABASE is optional and defaults to nexus. Never commit credentials.
 
-Project registration currently accepts a path through the loopback API; restrict this to a directory selected and authorized by Electron main before desktop release. Removing a project deletes its metadata/index records, not project files.
+Removing a project deletes its registry/index records but leaves project files untouched. The scanner stores metadata and hashes, not source contents.
