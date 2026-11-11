@@ -29,7 +29,7 @@ Baseline: `main` at merge commit `76401e96476a1f59af717cd91d08f05f55e3ab21`
 | --- | --- | --- |
 | 1. Project intelligence | Partial | Bounded scan/index/watch exists; add correct nested ignore semantics, recovery, richer structural analysis and generated summaries. |
 | 2. Context management | Partial | Bounded keyword excerpts exist; add conversation/task layers, memory retrieval, deduplication and model-budget accounting. |
-| 3. Code editing | Partial | Safe read/create/modify/delete/move, local staged multi-file proposals, bounded diffs, explicit approval, conflict detection, and pre-edit snapshots exist. AI generation, structured patch input, automated verification in the edit lifecycle, and service-level integration tests remain. |
+| 3. Code editing | Partial | Safe read/create/modify/delete/move, local staged multi-file proposals, bounded diffs, explicit approval, conflict detection, and pre-edit snapshots exist. AI-generated proposals and automated test execution in the apply lifecycle remain. |
 | 4. Version history | Partial | File snapshot/compare/hash-checked restore exists; connect every edit to operation history, add project snapshots and deduplication. |
 | 5. Task planner | Partial | Persisted plans, dependency DAG validation, inspectable progress/events, controlled task/step transitions, priority, and secret redaction exist. AI planning, tool execution, background persistence/recovery and robust cancel/retry checkpoints remain. |
 | 6. Terminal/process manager | Not implemented | Windows PowerShell/CMD runner with validation, approval gates, timeouts, output streaming and owned process lifecycle. |
