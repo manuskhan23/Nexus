@@ -3,13 +3,10 @@
   "version": "0.1.0",
   "private": true,
   "description": "Secure, project-aware desktop engineering agent",
-  "main": "dist/main/index.js",
   "scripts": {
-    "dev": "concurrently -k \"npm:dev:server\" \"npm:dev:renderer\" \"npm:dev:electron\"",
-    "dev:server": "tsx watch src/server/index.ts",
-    "dev:renderer": "vite --config vite.config.ts",
-    "dev:electron": "wait-on tcp:5173 tcp:3001 && electron .",
-    "build": "tsc --noEmit && vite build",
+    "dev": "tsx watch src/server/index.ts",
+    "build": "tsc",
+    "start": "node dist/server/index.js",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
