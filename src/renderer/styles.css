@@ -1,0 +1,38 @@
+:root {
+  color-scheme: dark;
+  font-family: Inter, "Segoe UI", sans-serif;
+  color: #fff;
+  background: #000;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+}
+* { box-sizing: border-box; }
+body { margin: 0; min-width: 760px; min-height: 100vh; background: #000; }
+button { color: inherit; font: inherit; cursor: pointer; }
+button:disabled { opacity: .55; cursor: wait; }
+.app-shell { max-width: 1160px; margin: 0 auto; padding: 36px 44px 24px; min-height: 100vh; display: flex; flex-direction: column; }
+.topbar { display: flex; align-items: center; justify-content: space-between; padding-bottom: 28px; border-bottom: 1px solid #2a2a2a; }
+.eyebrow, footer { color: #888; letter-spacing: .16em; font-size: 10px; font-weight: 700; }
+h1 { margin: 8px 0 0; font-size: 32px; letter-spacing: -.04em; }
+.primary-button, .secondary-button { border: 1px solid #fff; border-radius: 7px; padding: 10px 15px; background: #fff; color: #000; font-weight: 650; }
+.secondary-button { background: #171717; color: #fff; border-color: #383838; }
+.primary-button:hover { background: #ddd; }
+.secondary-button:hover, .text-button:hover { border-color: #fff; }
+.intro { padding: 30px 0 22px; }
+.intro-title { margin: 0 0 7px; font-size: 17px; font-weight: 650; }
+.muted { color: #999; }
+.small { font-size: 12px; }
+.message { margin: 0 0 14px; padding: 12px 14px; border: 1px solid #3b3b3b; border-radius: 7px; background: #111; color: #ddd; font-size: 13px; }
+.message.error { border-color: #777; color: #fff; }
+.project-list { display: grid; gap: 12px; }
+.project-card { padding: 18px; border: 1px solid #2a2a2a; border-radius: 10px; background: #111; }
+.project-heading { display: flex; justify-content: space-between; gap: 20px; align-items: flex-start; }
+.project-heading h2, .empty-state h2 { margin: 0 0 7px; font-size: 16px; }
+.project-path { margin: 0; max-width: 790px; color: #888; font: 12px/1.5 ui-monospace, Consolas, monospace; overflow-wrap: anywhere; }
+.index-badge { flex: 0 0 auto; padding: 6px 8px; border: 1px solid #333; border-radius: 5px; color: #aaa; font-size: 9px; letter-spacing: .12em; }
+.actions { display: flex; gap: 8px; margin-top: 15px; }
+.text-button { border: 1px solid transparent; border-radius: 7px; padding: 9px 12px; background: transparent; color: #aaa; }
+.empty-state { padding: 68px 20px; border: 1px dashed #303030; border-radius: 10px; text-align: center; }
+.empty-state p { margin: 0 0 18px; }
+.empty-mark { display: inline-grid; place-items: center; width: 36px; height: 36px; margin-bottom: 14px; border: 1px solid #444; border-radius: 50%; font-size: 15px; }
+footer { margin-top: auto; padding-top: 40px; }

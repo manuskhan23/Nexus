@@ -40,6 +40,7 @@ async function connect(): Promise<void> {
     await connectPromise;
   } catch (error) {
     connectPromise = undefined;
+    await client?.close().catch(() => undefined);
     client = undefined;
     database = undefined;
     throw error;
@@ -57,6 +58,13 @@ async function collections(): Promise<{ projects: Collection<StoredProject>; fil
 function publicProject(document: WithId<StoredProject>): ProjectRecord {
   const { _id: _ignored, ...project } = document;
   return project;
+}
+
+async function touch(projects: Collection<StoredProject>, id: string, indexedAt: string): Promise<void> {
+  await projects.updateOne(
+    { id },
+    { $set: { lastIndexedAt: indexedAt }, $inc: { indexVersion: 1 } }
+  );
 }
 
 export const projectStore = {
@@ -87,10 +95,17 @@ export const projectStore = {
     if (indexedFiles.length > 0) {
       await files.insertMany(indexedFiles.map((file) => ({ ...file, projectId: id })), { ordered: true });
     }
-    await projects.updateOne(
-      { id },
-      { $set: { lastIndexedAt: indexedAt }, $inc: { indexVersion: 1 } }
-    );
+    await touch(projects, id, indexedAt);
+  },
+  async upsertIndexedFile(id: string, file: IndexedFile, indexedAt: string): Promise<void> {
+    const { projects, files } = await collections();
+    await files.replaceOne({ projectId: id, path: file.path }, { ...file, projectId: id }, { upsert: true });
+    await touch(projects, id, indexedAt);
+  },
+  async removeIndexedFile(id: string, relativePath: string, indexedAt: string): Promise<void> {
+    const { projects, files } = await collections();
+    await files.deleteOne({ projectId: id, path: relativePath.replaceAll("\\", "/") });
+    await touch(projects, id, indexedAt);
   },
   async close(): Promise<void> {
     await client?.close();
