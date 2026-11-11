@@ -300,7 +300,7 @@ async function atomicWrite(
   try {
     if (expectedCurrentHash === null) {
       await link(temporary, absolute);
-      await unlink(temporary);
+      await unlink(temporary).catch(() => undefined);
     } else {
       const current = await readFile(absolute).catch((error: unknown) => {
         if (isMissing(error)) return null;
