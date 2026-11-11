@@ -125,6 +125,16 @@ interface Task {
   events: TaskEvent[];
 }
 interface TaskList { tasks: Task[] }
+interface TerminalResult {
+  processId: string;
+  exitCode: number | null;
+  stdout: string;
+  stderr: string;
+  durationMs: number;
+  timedOut: boolean;
+  outputTruncated: boolean;
+}
+interface TerminalProcesses { processIds: string[] }
 
 export function App() {
   const [projects, setProjects] = useState<Project[]>([]);
@@ -146,6 +156,11 @@ export function App() {
   const [taskPlan, setTaskPlan] = useState("");
   const [taskPriority, setTaskPriority] = useState<"low" | "normal" | "high">("normal");
   const [tasksByProject, setTasksByProject] = useState<Record<string, Task[]>>({});
+  const [terminalCommand, setTerminalCommand] = useState("");
+  const [terminalShell, setTerminalShell] = useState<"powershell" | "cmd">("powershell");
+  const [terminalCwd, setTerminalCwd] = useState("");
+  const [terminalResults, setTerminalResults] = useState<Record<string, TerminalResult>>({});
+  const [terminalProcesses, setTerminalProcesses] = useState<Record<string, string[]>>({});
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
 
@@ -239,6 +254,39 @@ export function App() {
         return next;
       });
       setNotice(`Restored ${snapshot.path}. A safety snapshot was kept in history.`);
+    });
+  }
+
+  function runTerminal(project: Project) {
+    return run(async () => {
+      const command = terminalCommand.trim();
+      if (!command) throw new Error("Enter a command to run");
+      const approved = window.confirm(`Run this ${terminalShell} command in ${project.name}${terminalCwd.trim() ? " / " + terminalCwd.trim() : ""}?\n\n${command}\n\nThe command can change project files or run other programs.`);
+      if (!approved) return;
+      const result = await window.nexus.terminal.run(project.id, {
+        command, shell: terminalShell, cwd: terminalCwd.trim() || undefined
+      }, true) as TerminalResult;
+      setTerminalResults((current) => ({ ...current, [project.id]: result }));
+      const processList = await window.nexus.terminal.listProcesses(project.id) as TerminalProcesses;
+      setTerminalProcesses((current) => ({ ...current, [project.id]: processList.processIds }));
+      setNotice(result.timedOut ? "Command timed out and was stopped." : `Command finished with exit code ${result.exitCode}.`);
+    });
+  }
+
+  function loadTerminalProcesses(project: Project) {
+    return run(async () => {
+      const result = await window.nexus.terminal.listProcesses(project.id) as TerminalProcesses;
+      setTerminalProcesses((current) => ({ ...current, [project.id]: result.processIds }));
+    });
+  }
+
+  function stopTerminalProcess(project: Project, processId: string) {
+    return run(async () => {
+      const approved = window.confirm(`Stop process ${processId}? This terminates the process tree.`);
+      if (!approved) return;
+      await window.nexus.terminal.cancel(project.id, processId, true);
+      const result = await window.nexus.terminal.listProcesses(project.id) as TerminalProcesses;
+      setTerminalProcesses((current) => ({ ...current, [project.id]: result.processIds }));
     });
   }
 
@@ -444,6 +492,37 @@ export function App() {
                 <button className="secondary-button" onClick={() => void rescan(project)} disabled={busy}>Rescan</button>
                 <button className="text-button" onClick={() => void removeProject(project)} disabled={busy}>Remove</button>
               </div>
+
+              <section className="task-panel">
+                <h3>Terminal</h3>
+                <p className="muted small">Run a command in this project. Every run requires confirmation and is limited to two minutes and 128 KiB of output.</p>
+                <div className="task-form">
+                  <select value={terminalShell} onChange={(event) => setTerminalShell(event.target.value as typeof terminalShell)} aria-label="Command shell">
+                    <option value="powershell">PowerShell</option>
+                    <option value="cmd">Command Prompt</option>
+                  </select>
+                  <input value={terminalCwd} onChange={(event) => setTerminalCwd(event.target.value)} maxLength={4096}
+                    placeholder="Working directory inside project (optional)" aria-label="Project-relative working directory" />
+                  <textarea value={terminalCommand} onChange={(event) => setTerminalCommand(event.target.value)} maxLength={16000}
+                    placeholder="Enter command" aria-label="Terminal command" />
+                  <div className="actions">
+                    <button className="secondary-button" onClick={() => void runTerminal(project)} disabled={busy || !terminalCommand.trim()}>Review and run</button>
+                    <button className="text-button" onClick={() => void loadTerminalProcesses(project)} disabled={busy}>Owned processes</button>
+                  </div>
+                </div>
+                {terminalResults[project.id] && (
+                  <pre className="diff-view" aria-live="polite">{terminalResults[project.id].stdout}{terminalResults[project.id].stderr ? `\n${terminalResults[project.id].stderr}` : ""}
+                    {terminalResults[project.id].outputTruncated ? "\n… output truncated at 128 KiB" : ""}
+                    {terminalResults[project.id].timedOut ? "\n… command timed out" : ""}
+                  </pre>
+                )}
+                {(terminalProcesses[project.id] ?? []).map((processId) => (
+                  <div className="snapshot-row" key={processId}>
+                    <code>{processId}</code>
+                    <button className="text-button" onClick={() => void stopTerminalProcess(project, processId)} disabled={busy}>Stop</button>
+                  </div>
+                ))}
+              </section>
 
               <section className="task-panel">
                 <div className="project-heading">
