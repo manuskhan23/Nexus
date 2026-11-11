@@ -26,6 +26,11 @@ declare global {
         apply(projectId: string, proposalId: string, approvalGranted: boolean): Promise<unknown>;
         reject(projectId: string, proposalId: string): Promise<boolean>;
       };
+      terminal: {
+        run(projectId: string, input: unknown, approvalGranted: boolean): Promise<unknown>;
+        listProcesses(projectId: string): Promise<unknown>;
+        cancel(projectId: string, processId: string, approvalGranted: boolean): Promise<unknown>;
+      };
       tasks: {
         list(projectId: string): Promise<unknown>;
         create(projectId: string, input: unknown): Promise<unknown>;
