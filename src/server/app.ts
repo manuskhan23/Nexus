@@ -14,6 +14,7 @@ import { scanProject } from "../project-intelligence/scanner.js";
 import { watchProject, unwatchProject } from "../project-intelligence/watcher.js";
 import { createFileSnapshot, diffFileSnapshot, restoreFileSnapshot } from "../version-history/snapshot-service.js";
 import { projectStore } from "../storage/project-store.js";
+import { createMemory, listMemories, removeMemory, updateMemory } from "../memory/memory-service.js";
 
 export function createApiApp(apiToken: string): express.Express {
   if (apiToken.length < 32) throw new Error("API token must be at least 32 characters");
@@ -400,6 +401,69 @@ export function createApiApp(apiToken: string): express.Express {
     } catch (error) {
       const message = error instanceof Error ? error.message : "Process could not be stopped";
       response.status(400).json({ error: message });
+    }
+  });
+
+  app.get("/api/projects/:id/memories", async (request, response) => {
+    try {
+      response.json({ memories: await listMemories(request.params.id) });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Memory listing failed";
+      response.status(message === "Project not found" ? 404 : 400).json({ error: message });
+    }
+  });
+
+  app.get("/api/projects/:id/memories/export", async (request, response) => {
+    try {
+      const memories = await listMemories(request.params.id);
+      response.json({ version: 1, exportedAt: new Date().toISOString(), projectId: request.params.id, memories });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Memory export failed";
+      response.status(message === "Project not found" ? 404 : 400).json({ error: message });
+    }
+  });
+
+  app.post("/api/projects/:id/memories", async (request, response) => {
+    const { scope, title, content } = request.body ?? {};
+    if ((scope !== "user" && scope !== "project") || typeof title !== "string" || typeof content !== "string") {
+      response.status(400).json({ error: "Memory scope, title, and content are required" });
+      return;
+    }
+    try {
+      response.status(201).json({ memory: await createMemory(request.params.id, scope, title, content) });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Memory creation failed";
+      response.status(message === "Project not found" ? 404 : 400).json({ error: message });
+    }
+  });
+
+  app.put("/api/projects/:id/memories/:memoryId", async (request, response) => {
+    const { title, content, enabled } = request.body ?? {};
+    if ((title !== undefined && typeof title !== "string") ||
+        (content !== undefined && typeof content !== "string") ||
+        (enabled !== undefined && typeof enabled !== "boolean")) {
+      response.status(400).json({ error: "Invalid memory update" });
+      return;
+    }
+    try {
+      response.json({ memory: await updateMemory(request.params.id, request.params.memoryId, { title, content, enabled }) });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Memory update failed";
+      const status = message === "Project not found" ? 404 : message === "Memory not found" ? 404 : message.includes("concurrently") ? 409 : 400;
+      response.status(status).json({ error: message });
+    }
+  });
+
+  app.delete("/api/projects/:id/memories/:memoryId", async (request, response) => {
+    try {
+      if (!await removeMemory(request.params.id, request.params.memoryId)) {
+        response.status(404).json({ error: "Memory not found" });
+        return;
+      }
+      response.status(204).end();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Memory removal failed";
+      response.status(message === "Project not found" || message === "Memory not found" ? 404 : 400).json({ error: message });
     }
   });
 
