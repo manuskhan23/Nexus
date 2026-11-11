@@ -69,6 +69,38 @@ function registerIpc(): void {
     });
   });
 
+  ipcMain.handle("terminal:run", async (event, id: unknown, input: unknown, approvalGranted: unknown) => {
+    assertTrustedRenderer(event);
+    if (typeof id !== "string" || id.length > 64 || !input || typeof input !== "object" || approvalGranted !== true) {
+      throw new Error("Explicit approval and a valid terminal command are required");
+    }
+    const value = input as Record<string, unknown>;
+    if (typeof value.command !== "string" || value.command.length > 16_000 ||
+        (value.shell !== "powershell" && value.shell !== "cmd") ||
+        (value.cwd !== undefined && typeof value.cwd !== "string") ||
+        (value.timeoutMs !== undefined && typeof value.timeoutMs !== "number")) {
+      throw new Error("Invalid terminal command");
+    }
+    return apiRequest(`/api/projects/${encodeURIComponent(id)}/terminal/commands`, {
+      method: "POST", body: JSON.stringify({ ...value, approved: true })
+    });
+  });
+
+  ipcMain.handle("terminal:processes", async (event, id: unknown) => {
+    assertTrustedRenderer(event);
+    if (typeof id !== "string" || id.length > 64) throw new Error("Invalid project identifier");
+    return apiRequest(`/api/projects/${encodeURIComponent(id)}/terminal/processes`);
+  });
+
+  ipcMain.handle("terminal:cancel", async (event, id: unknown, processId: unknown, approvalGranted: unknown) => {
+    assertTrustedRenderer(event);
+    if (typeof id !== "string" || id.length > 64 || typeof processId !== "string" || processId.length > 64 ||
+        approvalGranted !== true) throw new Error("Explicit approval is required to stop the process");
+    return apiRequest(`/api/projects/${encodeURIComponent(id)}/terminal/processes/${encodeURIComponent(processId)}/cancel`, {
+      method: "POST", body: JSON.stringify({ approved: true })
+    });
+  });
+
   ipcMain.handle("tasks:list", async (event, id: unknown) => {
     assertTrustedRenderer(event);
     if (typeof id !== "string" || id.length > 64) throw new Error("Invalid project identifier");
