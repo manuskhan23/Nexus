@@ -54,7 +54,7 @@ export function registerTerminalTools(registry: ToolRegistry): void {
     risk: "low",
     timeoutMs: 2_000,
     validate: validateProcess,
-    execute(input) {
+    async execute(input) {
       const result = getOwnedProcess(input.projectId, input.processId);
       if (!result) throw new Error("Process not found");
       return result;
