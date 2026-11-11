@@ -3,7 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { getOwnedProcess, startCommand } from "./process-manager.js";
+import { cancelCommand, getOwnedProcess, startCommand } from "./process-manager.js";
 
 test("terminal runner refuses execution unless explicitly approved", async () => {
   await assert.rejects(
@@ -28,6 +28,7 @@ test("PowerShell runs inside a registered project and captures output", {
   skip: process.platform !== "win32"
 }, async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "nexus-terminal-"));
+  let processId: string | undefined;
   try {
     const started = await startCommand(
       { projectId: "test-project", command: "Write-Output 'nexus terminal smoke'", shell: "powershell" },
@@ -36,11 +37,15 @@ test("PowerShell runs inside a registered project and captures output", {
         id, name: "test", root, addedAt: new Date().toISOString(), lastIndexedAt: null, indexVersion: 0
       })
     );
+    processId = started.processId;
+    processId = started.processId;
     const result = await waitForProcess("test-project", started.processId);
     assert.equal(result.exitCode, 0);
     assert.match(result.stdout, /nexus terminal smoke/);
     assert.equal(result.timedOut, false);
   } finally {
+    if (processId) await cancelCommand("test-project", processId, true);
+    await new Promise((resolve) => setTimeout(resolve, 250));
     await rm(root, { recursive: true, force: true });
   }
 });
@@ -49,6 +54,7 @@ test("terminal runner kills a timed out PowerShell process tree", {
   skip: process.platform !== "win32"
 }, async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "nexus-terminal-timeout-"));
+  let processId: string | undefined;
   try {
     const started = await startCommand(
       { projectId: "test-project", command: "Start-Sleep -Seconds 5", shell: "powershell", timeoutMs: 1_000 },
@@ -60,6 +66,8 @@ test("terminal runner kills a timed out PowerShell process tree", {
     const result = await waitForProcess("test-project", started.processId);
     assert.equal(result.timedOut, true);
   } finally {
+    if (processId) await cancelCommand("test-project", processId, true);
+    await new Promise((resolve) => setTimeout(resolve, 250));
     await rm(root, { recursive: true, force: true });
   }
 });
