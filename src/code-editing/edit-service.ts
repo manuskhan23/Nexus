@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { lstat, mkdir, open, readFile, realpath, rename, unlink } from "node:fs/promises";
+import { link, lstat, mkdir, open, readFile, realpath, rename, unlink } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import type { EditProposal, EditProposalChange, ProjectRecord } from "../storage/project-store.js";
@@ -282,7 +282,12 @@ async function ensureParentDirectories(root: string, relativePath: string): Prom
   return parent;
 }
 
-async function atomicWrite(absolute: string, bytes: Buffer, mode: number): Promise<void> {
+async function atomicWrite(
+  absolute: string,
+  bytes: Buffer,
+  mode: number,
+  expectedCurrentHash: string | null
+): Promise<void> {
   const temporary = path.join(path.dirname(absolute), `.${path.basename(absolute)}.${randomUUID()}.nexus-tmp`);
   const handle = await open(temporary, "wx", 0o600);
   try {
@@ -293,7 +298,19 @@ async function atomicWrite(absolute: string, bytes: Buffer, mode: number): Promi
     await handle.close();
   }
   try {
-    await rename(temporary, absolute);
+    if (expectedCurrentHash === null) {
+      await link(temporary, absolute);
+      await unlink(temporary);
+    } else {
+      const current = await readFile(absolute).catch((error: unknown) => {
+        if (isMissing(error)) return null;
+        throw error;
+      });
+      if (!current || hash(current) !== expectedCurrentHash) {
+        throw new Error("File changed while the edit was being written");
+      }
+      await rename(temporary, absolute);
+    }
   } catch (error) {
     await unlink(temporary).catch(() => undefined);
     throw error;
@@ -354,8 +371,12 @@ export async function applyEditProposal(projectId: string, id: string): Promise<
         const parent = await ensureParentDirectories(root, change.destinationPath!);
         const bytes = stagedBytes.get(change);
         if (!bytes) throw new Error("Staged move content is unavailable");
-        await atomicWrite(path.join(parent, path.basename(destination)), bytes, current.mode);
+        await atomicWrite(path.join(parent, path.basename(destination)), bytes, current.mode, null);
         moveTargetsCreated.add(change);
+        const sourceNow = await findProjectFile(root, change.path);
+        if (!sourceNow || hash(sourceNow.bytes) !== change.expectedHash) {
+          throw new Error(`File changed during move: ${change.path}`);
+        }
         await unlink(current.absolute);
       } else if (change.action === "delete") {
         if (current) await unlink(current.absolute);
@@ -364,7 +385,7 @@ export async function applyEditProposal(projectId: string, id: string): Promise<
         const parent = await ensureParentDirectories(root, change.path);
         const bytes = stagedBytes.get(change);
         if (!bytes) throw new Error("Staged edit content is unavailable");
-        await atomicWrite(path.join(parent, path.basename(absolute)), bytes, current?.mode ?? 0o644);
+        await atomicWrite(path.join(parent, path.basename(absolute)), bytes, current?.mode ?? 0o644, change.expectedHash);
       }
       applied.push(change);
     }
