@@ -97,7 +97,11 @@ export async function startCommand(
   const args = request.shell === "powershell"
     ? ["-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(request.command + "\nexit $LASTEXITCODE", "utf16le").toString("base64")]
     : ["/d", "/s", "/c", request.command];
-  const child = spawn(request.shell === "powershell" ? "powershell.exe" : "cmd.exe", args, {
+  const systemRoot = process.env.SystemRoot || "C:\\Windows";
+  const executable = request.shell === "powershell"
+    ? path.join(systemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe")
+    : path.join(systemRoot, "System32", "cmd.exe");
+  const child = spawn(executable, args, {
     cwd, env: boundedEnv(), windowsHide: true, stdio: ["ignore", "pipe", "pipe"]
   });
   const startedAtMs = Date.now();
