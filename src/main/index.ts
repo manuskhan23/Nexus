@@ -36,6 +36,16 @@ async function apiRequest<T>(route: string, init?: RequestInit): Promise<T> {
   return await response.json() as T;
 }
 
+function hasSecureProviderStorage(): boolean {
+  return safeStorage.isEncryptionAvailable() && safeStorage.getSelectedStorageBackend() !== "basic_text";
+}
+
+function requireSecureProviderStorage(): void {
+  if (!hasSecureProviderStorage()) {
+    throw new Error("OS-backed credential encryption is unavailable; provider keys were not stored");
+  }
+}
+
 async function loadProviderCredentials(): Promise<void> {
   const file = path.join(app.getPath("userData"), "provider-credentials.json");
   let encoded: Record<string, string>;
@@ -45,7 +55,7 @@ async function loadProviderCredentials(): Promise<void> {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
     throw new Error("Stored provider credentials could not be read");
   }
-  if (!safeStorage.isEncryptionAvailable()) throw new Error("OS-backed credential encryption is unavailable");
+  requireSecureProviderStorage();
   for (const provider of ["gemini", "groq"] as const) {
     const value = encoded[provider];
     if (typeof value !== "string") continue;
@@ -83,7 +93,7 @@ async function saveProviderCredential(provider: AIProviderId, credential: string
 function registerIpc(): void {
   ipcMain.handle("settings:providers", async (event) => {
     assertTrustedRenderer(event);
-    return { providers: getProviderStatuses(), encryptionAvailable: safeStorage.isEncryptionAvailable() };
+    return { providers: getProviderStatuses(), encryptionAvailable: hasSecureProviderStorage() };
   });
 
   ipcMain.handle("settings:provider-test", async (event, provider: unknown, model: unknown) => {
