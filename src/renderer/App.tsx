@@ -143,6 +143,10 @@ interface BrowserSnapshot {
   truncated: boolean;
 }
 interface BrowserSessionView extends BrowserSnapshot {}
+interface ProviderSettingsView {
+  providers: Array<{ id: "gemini" | "groq"; configured: boolean }>;
+  encryptionAvailable: boolean;
+}
 
 interface TerminalProcesses { processes: TerminalResult[] }
 
@@ -174,6 +178,11 @@ export function App() {
   const [browserSelector, setBrowserSelector] = useState("");
   const [browserValue, setBrowserValue] = useState("");
   const [browserByProject, setBrowserByProject] = useState<Record<string, BrowserSessionView>>({});
+  const [providerConfigured, setProviderConfigured] = useState<Record<"gemini" | "groq", boolean>>({ gemini: false, groq: false });
+  const [providerEncryptionAvailable, setProviderEncryptionAvailable] = useState(false);
+  const [providerCredentials, setProviderCredentials] = useState<Record<"gemini" | "groq", string>>({ gemini: "", groq: "" });
+  const [providerModels, setProviderModels] = useState<Record<"gemini" | "groq", string>>({ gemini: "", groq: "" });
+  const [providerTestResult, setProviderTestResult] = useState("");
   const [terminalProcesses, setTerminalProcesses] = useState<Record<string, TerminalResult[]>>({});
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -189,6 +198,12 @@ export function App() {
       setError(cause instanceof Error ? cause.message : "Could not load projects");
     });
   }, [refresh]);
+
+  useEffect(() => {
+    void refreshProviderSettings().catch((cause: unknown) => {
+      setError(cause instanceof Error ? cause.message : "Could not load provider settings");
+    });
+  }, []);
 
   useEffect(() => {
     const active = Object.entries(terminalProcesses).flatMap(([projectId, processes]) =>
@@ -222,6 +237,37 @@ export function App() {
     }, 500);
     return () => window.clearInterval(timer);
   }, [terminalProcesses]);
+
+  async function refreshProviderSettings() {
+    const result = await window.nexus.settings.listProviders() as ProviderSettingsView;
+    setProviderConfigured({
+      gemini: result.providers.some((item) => item.id === "gemini" && item.configured),
+      groq: result.providers.some((item) => item.id === "groq" && item.configured)
+    });
+    setProviderEncryptionAvailable(result.encryptionAvailable);
+  }
+
+  function saveProvider(provider: "gemini" | "groq", remove = false) {
+    return run(async () => {
+      const credential = remove ? null : providerCredentials[provider].trim();
+      if (!remove && !credential) throw new Error("Enter a provider API key first");
+      await window.nexus.settings.saveProviderCredential(provider, credential);
+      setProviderConfigured((current) => ({ ...current, [provider]: !remove }));
+      setProviderCredentials((current) => ({ ...current, [provider]: "" }));
+      setNotice(remove ? `${provider} key removed from this device.` : `${provider} key encrypted and stored on this device.`);
+    });
+  }
+
+  function testProvider(provider: "gemini" | "groq") {
+    return run(async () => {
+      const model = providerModels[provider].trim();
+      if (!model) throw new Error("Enter a model identifier for this provider");
+      const approved = window.confirm(`Send a short generic connection test to ${provider} using model ${model}?`);
+      if (!approved) return;
+      const result = await window.nexus.settings.testProvider(provider, model) as { text: string };
+      setProviderTestResult(`${provider}: ${result.text}`);
+    });
+  }
 
   async function run(action: () => Promise<void>) {
     setBusy(true);
@@ -588,6 +634,31 @@ export function App() {
 
       {error && <div className="message error" role="alert">{error}</div>}
       {notice && <div className="message" role="status">{notice}</div>}
+
+      <section className="task-panel">
+        <h2>AI providers</h2>
+        <p className="muted small">Only Gemini and Groq are supported. API keys are encrypted with Electron OS-backed storage on this device and never returned to the renderer after saving.</p>
+        {!providerEncryptionAvailable && <p className="message error">OS-backed credential encryption is unavailable. Provider keys cannot be saved securely.</p>}
+        {(["gemini", "groq"] as const).map((provider) => (
+          <div className="snapshot-row" key={provider}>
+            <div className="task-form">
+              <strong>{provider === "gemini" ? "Google Gemini" : "Groq"} · {providerConfigured[provider] ? "configured" : "not configured"}</strong>
+              <input type="password" autoComplete="new-password" value={providerCredentials[provider]}
+                onChange={(event) => setProviderCredentials((current) => ({ ...current, [provider]: event.target.value }))}
+                maxLength={4096} placeholder={providerConfigured[provider] ? "Enter a replacement key" : "Paste API key"}
+                aria-label={`${provider} API key`} />
+              <div className="search-row">
+                <input value={providerModels[provider]} onChange={(event) => setProviderModels((current) => ({ ...current, [provider]: event.target.value }))}
+                  maxLength={120} placeholder="Model identifier" aria-label={`${provider} model identifier`} />
+                <button className="secondary-button" onClick={() => void saveProvider(provider)} disabled={busy || !providerEncryptionAvailable}>Save key</button>
+                {providerConfigured[provider] && <button className="text-button" onClick={() => void saveProvider(provider, true)} disabled={busy}>Remove key</button>}
+                <button className="text-button" onClick={() => void testProvider(provider)} disabled={busy || !providerConfigured[provider]}>Test provider</button>
+              </div>
+            </div>
+          </div>
+        ))}
+        {providerTestResult && <p className="muted small" role="status">{providerTestResult}</p>}
+      </section>
 
       <section className="project-list" aria-label="Registered projects">
         {projects.length === 0 ? (
