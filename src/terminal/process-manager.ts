@@ -95,7 +95,7 @@ export async function startCommand(
   const timeoutMs = Math.max(1_000, Math.min(request.timeoutMs ?? 30_000, MAX_TIMEOUT_MS));
   const processId = randomUUID();
   const args = request.shell === "powershell"
-    ? ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", request.command + "\nexit $LASTEXITCODE"]
+    ? ["-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(request.command + "\nexit $LASTEXITCODE", "utf16le").toString("base64")]
     : ["/d", "/s", "/c", request.command];
   const child = spawn(request.shell === "powershell" ? "powershell.exe" : "cmd.exe", args, {
     cwd, env: boundedEnv(), windowsHide: true, stdio: ["ignore", "pipe", "pipe"]
