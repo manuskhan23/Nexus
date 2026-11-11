@@ -68,8 +68,9 @@ interface EditableFile {
 }
 interface EditChange {
   path: string;
-  action: "write" | "delete";
+  action: "write" | "delete" | "move";
   expectedHash: string | null;
+  destinationPath?: string;
   size: number;
   currentHash: string | null;
   conflict: boolean;
@@ -88,12 +89,13 @@ interface EditProposal {
   changes: EditChange[];
 }
 interface EditProposalList {
-  proposals: Array<Omit<EditProposal, "changes"> & { changes: Array<{ path: string; action: "write" | "delete"; expectedHash: string | null; size: number }> }>;
+  proposals: Array<Omit<EditProposal, "changes"> & { changes: Array<{ path: string; action: "write" | "delete" | "move"; expectedHash: string | null; destinationPath?: string; size: number }> }>;
 }
 interface DraftChange {
   path: string;
-  action: "write" | "delete";
+  action: "write" | "delete" | "move";
   expectedHash: string | null;
+  destinationPath?: string;
   content?: string;
 }
 
@@ -107,6 +109,7 @@ export function App() {
   const [diffs, setDiffs] = useState<Record<string, SnapshotDiff>>({});
   const [editPath, setEditPath] = useState("");
   const [editTitle, setEditTitle] = useState("");
+  const [moveDestination, setMoveDestination] = useState("");
   const [drafts, setDrafts] = useState<Record<string, EditableFile>>({});
   const [editBatch, setEditBatch] = useState<Record<string, DraftChange[]>>({});
   const [editProposals, setEditProposals] = useState<Record<string, EditProposalList["proposals"]>>({});
@@ -217,11 +220,12 @@ export function App() {
     });
   }
 
-  function queueEditChange(project: Project, action: "write" | "delete") {
+  function queueEditChange(project: Project, action: "write" | "delete" | "move") {
     return run(async () => {
       const draft = drafts[project.id];
       if (!draft) throw new Error("Inspect the file before staging a change");
-      if (action === "delete" && !draft.exists) throw new Error("The file does not exist");
+      if (action !== "write" && !draft.exists) throw new Error("The file does not exist");
+      if (action === "move" && !moveDestination.trim()) throw new Error("Enter a destination path for the move");
       const batch = editBatch[project.id] ?? [];
       if (batch.some((change) => change.path === draft.path)) throw new Error("This file is already in the proposal batch");
       if (batch.length >= 19) throw new Error("A proposal can contain at most 20 file changes");
@@ -229,7 +233,8 @@ export function App() {
         path: draft.path,
         action,
         expectedHash: draft.hash,
-        ...(action === "write" ? { content: draft.content } : {})
+        ...(action === "write" ? { content: draft.content } : {}),
+        ...(action === "move" ? { destinationPath: moveDestination.trim() } : {})
       };
       setEditBatch((current) => ({ ...current, [project.id]: [...batch, change] }));
       setNotice(`Added ${draft.path} to the proposal batch.`);
@@ -385,8 +390,14 @@ export function App() {
                       maxLength={1_000_000} spellCheck={false} aria-label="Proposed file content" />
                     <div className="actions">
                       <button className="secondary-button" onClick={() => void queueEditChange(project, "write")} disabled={busy}>Add change</button>
-                      {drafts[project.id].exists &&
-                        <button className="text-button" onClick={() => void queueEditChange(project, "delete")} disabled={busy}>Add delete</button>}
+                      {drafts[project.id].exists && (
+                        <>
+                          <button className="text-button" onClick={() => void queueEditChange(project, "delete")} disabled={busy}>Add delete</button>
+                          <input value={moveDestination} onChange={(event) => setMoveDestination(event.target.value)}
+                            maxLength={4096} placeholder="New project-relative path" aria-label="Move destination" />
+                          <button className="text-button" onClick={() => void queueEditChange(project, "move")} disabled={busy}>Add move</button>
+                        </>
+                      )}
                       <button className="text-button" onClick={() => void loadEditProposals(project)} disabled={busy}>Edit history</button>
                     </div>
                     {(editBatch[project.id] ?? []).length > 0 && (
@@ -417,7 +428,7 @@ export function App() {
                     </div>
                     {selectedEdits[project.id].changes.map((change) => (
                       <section className="source-result" key={change.path}>
-                        <div className="source-heading"><strong>{change.path} · {change.action}</strong>
+                        <div className="source-heading"><strong>{change.path}{change.destinationPath ? ` → ${change.destinationPath}` : ""} · {change.action}</strong>
                           <span>{change.conflict ? "CONFLICT" : "READY"}</span></div>
                         <pre className="diff-view">{change.diff.join("\n")}{change.diffTruncated ? "\n… diff is bounded" : ""}</pre>
                       </section>
