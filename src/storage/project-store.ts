@@ -78,6 +78,14 @@ export const projectStore = {
     const document = await projects.findOne({ id });
     return document ? publicProject(document) : undefined;
   },
+  async listIndexedFiles(id: string): Promise<IndexedFile[]> {
+    const { files } = await collections();
+    const documents = await files.find(
+      { projectId: id },
+      { projection: { _id: 0, projectId: 0 } }
+    ).toArray();
+    return documents;
+  },
   async add(project: ProjectRecord): Promise<void> {
     const { projects } = await collections();
     await projects.insertOne(project);
