@@ -98,7 +98,7 @@ export async function startCommand(
     ? ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", request.command + "\nexit $LASTEXITCODE"]
     : ["/d", "/s", "/c", request.command];
   const child = execFile(request.shell === "powershell" ? "powershell.exe" : "cmd.exe", args, {
-    cwd, env: boundedEnv(), windowsHide: true, maxBuffer: MAX_OUTPUT_BYTES, timeout: 0
+    cwd, env: boundedEnv(), windowsHide: true, maxBuffer: MAX_OUTPUT_BYTES, timeout: 0,\n    stdio: ["ignore", "pipe", "pipe"]
   });
   const startedAtMs = Date.now();
   const item: OwnedProcess = {
