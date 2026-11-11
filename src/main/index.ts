@@ -195,6 +195,23 @@ function registerIpc(): void {
     return apiRequest(`/api/projects/${encodeURIComponent(id)}/tasks`);
   });
 
+  ipcMain.handle("tasks:plan", async (event, id: unknown, input: unknown, approvalGranted: unknown) => {
+    assertTrustedRenderer(event);
+    if (typeof id !== "string" || id.length > 64 || !input || typeof input !== "object" || approvalGranted !== true) {
+      throw new Error("Explicit approval and valid AI task details are required");
+    }
+    const value = input as Record<string, unknown>;
+    if ((value.provider !== "gemini" && value.provider !== "groq") ||
+        typeof value.model !== "string" || value.model.length > 120 ||
+        typeof value.title !== "string" || value.title.length > 160 ||
+        typeof value.description !== "string" || value.description.length > 4000) {
+      throw new Error("Invalid AI task planning input");
+    }
+    return apiRequest(`/api/projects/${encodeURIComponent(id)}/tasks/plan`, {
+      method: "POST", body: JSON.stringify({ ...value, approved: true })
+    });
+  });
+
   ipcMain.handle("tasks:create", async (event, id: unknown, input: unknown) => {
     assertTrustedRenderer(event);
     if (typeof id !== "string" || id.length > 64 || !input || typeof input !== "object") {
