@@ -69,6 +69,48 @@ function registerIpc(): void {
     });
   });
 
+  ipcMain.handle("tasks:list", async (event, id: unknown) => {
+    assertTrustedRenderer(event);
+    if (typeof id !== "string" || id.length > 64) throw new Error("Invalid project identifier");
+    return apiRequest(`/api/projects/${encodeURIComponent(id)}/tasks`);
+  });
+
+  ipcMain.handle("tasks:create", async (event, id: unknown, input: unknown) => {
+    assertTrustedRenderer(event);
+    if (typeof id !== "string" || id.length > 64 || !input || typeof input !== "object") {
+      throw new Error("Invalid task input");
+    }
+    return apiRequest(`/api/projects/${encodeURIComponent(id)}/tasks`, {
+      method: "POST",
+      body: JSON.stringify(input)
+    });
+  });
+
+  ipcMain.handle("tasks:status", async (event, id: unknown, taskId: unknown, status: unknown, note?: unknown) => {
+    assertTrustedRenderer(event);
+    if (typeof id !== "string" || id.length > 64 || typeof taskId !== "string" ||
+        typeof status !== "string" || (note !== undefined && typeof note !== "string")) {
+      throw new Error("Invalid task status update");
+    }
+    return apiRequest(`/api/projects/${encodeURIComponent(id)}/tasks/${encodeURIComponent(taskId)}/status`, {
+      method: "PUT",
+      body: JSON.stringify({ status, note })
+    });
+  });
+
+  ipcMain.handle("tasks:step", async (event, id: unknown, taskId: unknown, stepId: unknown, status: unknown, result?: unknown) => {
+    assertTrustedRenderer(event);
+    if (typeof id !== "string" || id.length > 64 || typeof taskId !== "string" ||
+        typeof stepId !== "string" || typeof status !== "string" ||
+        (result !== undefined && typeof result !== "string")) {
+      throw new Error("Invalid task step update");
+    }
+    return apiRequest(`/api/projects/${encodeURIComponent(id)}/tasks/${encodeURIComponent(taskId)}/steps/${encodeURIComponent(stepId)}`, {
+      method: "PUT",
+      body: JSON.stringify({ status, result })
+    });
+  });
+
   ipcMain.handle("files:read", async (event, id: unknown, filePath: unknown) => {
     assertTrustedRenderer(event);
     if (typeof id !== "string" || id.length > 64 || typeof filePath !== "string" || filePath.length > 4096) {
