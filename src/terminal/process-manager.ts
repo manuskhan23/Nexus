@@ -9,6 +9,8 @@ const execFileAsync = promisify(execFile);
 const MAX_COMMAND_LENGTH = 16_000;
 const MAX_OUTPUT_BYTES = 128 * 1024;
 const MAX_TIMEOUT_MS = 120_000;
+const HISTORY_LIMIT = 100;
+const HISTORY_TTL_MS = 10 * 60_000;
 
 export type ShellKind = "powershell" | "cmd";
 
@@ -20,8 +22,9 @@ export interface CommandRequest {
   timeoutMs?: number;
 }
 
-export interface CommandResult {
+export interface CommandSnapshot {
   processId: string;
+  status: "running" | "completed" | "failed";
   exitCode: number | null;
   stdout: string;
   stderr: string;
@@ -30,9 +33,11 @@ export interface CommandResult {
   outputTruncated: boolean;
 }
 
-interface OwnedProcess {
+interface OwnedProcess extends CommandSnapshot {
   projectId: string;
   child: ChildProcess;
+  startedAtMs: number;
+  timer: ReturnType<typeof setTimeout>;
 }
 
 const owned = new Map<string, OwnedProcess>();
@@ -44,8 +49,7 @@ function boundedEnv(): NodeJS.ProcessEnv {
 
 async function resolveWorkingDirectory(projectRoot: string, requested?: string): Promise<string> {
   const root = await realpath(projectRoot);
-  const candidate = path.resolve(root, requested || ".");
-  const resolved = await realpath(candidate);
+  const resolved = await realpath(path.resolve(root, requested || "."));
   const relative = path.relative(root, resolved);
   if (relative === ".." || relative.startsWith(".." + path.sep) || path.isAbsolute(relative)) {
     throw new Error("Working directory must remain inside the registered project");
@@ -63,7 +67,21 @@ function terminateTree(child: ChildProcess): void {
   }
 }
 
-export async function runCommand(\n  request: CommandRequest,\n  approved: boolean,\n  getProject: (projectId: string) => Promise<ProjectRecord | undefined> = projectStore.get\n): Promise<CommandResult> {
+function pruneHistory(): void {
+  const completed = Array.from(owned.entries())
+    .filter(([, item]) => item.status !== "running")
+    .sort((a, b) => a[1].startedAtMs - b[1].startedAtMs);
+  const expired = completed.filter(([, item]) => Date.now() - item.startedAtMs > HISTORY_TTL_MS);
+  for (const [id] of expired) owned.delete(id);
+  const remaining = completed.filter(([id]) => owned.has(id));
+  for (const [id] of remaining.slice(0, Math.max(0, remaining.length - HISTORY_LIMIT))) owned.delete(id);
+}
+
+export async function startCommand(
+  request: CommandRequest,
+  approved: boolean,
+  getProject: (projectId: string) => Promise<ProjectRecord | undefined> = projectStore.get
+): Promise<{ processId: string }> {
   if (!approved) throw new Error("Explicit approval is required to run terminal commands");
   if (process.platform !== "win32") throw new Error("Terminal execution is supported only on Windows");
   if (!request.projectId || request.projectId.length > 64) throw new Error("Invalid project identifier");
@@ -79,64 +97,94 @@ export async function runCommand(\n  request: CommandRequest,\n  approved: boole
   const args = request.shell === "powershell"
     ? ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", request.command]
     : ["/d", "/s", "/c", request.command];
-  const executable = request.shell === "powershell" ? "powershell.exe" : "cmd.exe";
-  const child = execFile(executable, args, {
-    cwd,
-    env: boundedEnv(),
-    windowsHide: true,
-    maxBuffer: MAX_OUTPUT_BYTES,
-    timeout: 0
+  const child = execFile(request.shell === "powershell" ? "powershell.exe" : "cmd.exe", args, {
+    cwd, env: boundedEnv(), windowsHide: true, maxBuffer: MAX_OUTPUT_BYTES, timeout: 0
   });
-  owned.set(processId, { projectId: request.projectId, child });
-  const started = Date.now();
-  let timedOut = false;
-  let outputTruncated = false;
-  const timer = setTimeout(() => {
-    timedOut = true;
-    terminateTree(child);
-  }, timeoutMs);
-  try {
-    return await new Promise<CommandResult>((resolve, reject) => {
-      let stdout = "";
-      let stderr = "";
-      let outputBytes = 0;
-      const append = (target: "stdout" | "stderr", chunk: Buffer | string) => {
-        const value = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-        const remaining = MAX_OUTPUT_BYTES - outputBytes;
-        if (remaining <= 0) {
-          outputTruncated = true;
-          terminateTree(child);
-          return;
-        }
-        const bounded = value.subarray(0, remaining).toString("utf8");
-        outputBytes += Math.min(value.length, remaining);
-        if (value.length > remaining) outputTruncated = true;
-        if (target === "stdout") stdout += bounded;
-        else stderr += bounded;
-      };
-      child.stdout?.on("data", (chunk: Buffer) => append("stdout", chunk));
-      child.stderr?.on("data", (chunk: Buffer) => append("stderr", chunk));
-      child.once("error", reject);
-      child.once("close", (code) => resolve({
-        processId, exitCode: code, stdout, stderr, durationMs: Date.now() - started, timedOut, outputTruncated
-      }));
-    });
-  } finally {
-    clearTimeout(timer);
-    owned.delete(processId);
-  }
+  const startedAtMs = Date.now();
+  const item: OwnedProcess = {
+    projectId: request.projectId,
+    child,
+    processId,
+    status: "running",
+    exitCode: null,
+    stdout: "",
+    stderr: "",
+    durationMs: 0,
+    timedOut: false,
+    outputTruncated: false,
+    startedAtMs,
+    timer: setTimeout(() => {
+      item.timedOut = true;
+      terminateTree(child);
+    }, timeoutMs)
+  };
+  owned.set(processId, item);
+  const append = (target: "stdout" | "stderr", chunk: Buffer | string) => {
+    const value = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    const used = Buffer.byteLength(item.stdout) + Buffer.byteLength(item.stderr);
+    const remaining = MAX_OUTPUT_BYTES - used;
+    if (remaining <= 0) {
+      item.outputTruncated = true;
+      terminateTree(child);
+      return;
+    }
+    const bounded = value.subarray(0, remaining).toString("utf8");
+    if (target === "stdout") item.stdout += bounded;
+    else item.stderr += bounded;
+    if (value.length > remaining) {
+      item.outputTruncated = true;
+      terminateTree(child);
+    }
+  };
+  child.stdout?.on("data", (chunk: Buffer) => append("stdout", chunk));
+  child.stderr?.on("data", (chunk: Buffer) => append("stderr", chunk));
+  child.once("error", (error) => {
+    item.status = "failed";
+    item.stderr = (item.stderr + "\n" + error.message).slice(0, MAX_OUTPUT_BYTES);
+    item.durationMs = Date.now() - startedAtMs;
+    clearTimeout(item.timer);
+    pruneHistory();
+  });
+  child.once("close", (code) => {
+    item.status = "completed";
+    item.exitCode = code;
+    item.durationMs = Date.now() - startedAtMs;
+    clearTimeout(item.timer);
+    pruneHistory();
+  });
+  pruneHistory();
+  return { processId };
+}
+
+function publicSnapshot(item: OwnedProcess): CommandSnapshot {
+  return {
+    processId: item.processId,
+    status: item.status,
+    exitCode: item.exitCode,
+    stdout: item.stdout,
+    stderr: item.stderr,
+    durationMs: item.status === "running" ? Date.now() - item.startedAtMs : item.durationMs,
+    timedOut: item.timedOut,
+    outputTruncated: item.outputTruncated
+  };
+}
+
+export function getOwnedProcess(projectId: string, processId: string): CommandSnapshot | undefined {
+  const item = owned.get(processId);
+  return item?.projectId === projectId ? publicSnapshot(item) : undefined;
 }
 
 export async function cancelCommand(projectId: string, processId: string, approved: boolean): Promise<boolean> {
   if (!approved) throw new Error("Explicit approval is required to terminate a running process");
-  const processRecord = owned.get(processId);
-  if (!processRecord || processRecord.projectId !== projectId) return false;
-  terminateTree(processRecord.child);
+  const item = owned.get(processId);
+  if (!item || item.projectId !== projectId || item.status !== "running") return false;
+  terminateTree(item.child);
   return true;
 }
 
-export function listOwnedProcesses(projectId: string): string[] {
-  return Array.from(owned.entries())
-    .filter(([, processRecord]) => processRecord.projectId === projectId)
-    .map(([id]) => id);
+export function listOwnedProcesses(projectId: string): CommandSnapshot[] {
+  pruneHistory();
+  return Array.from(owned.values())
+    .filter((item) => item.projectId === projectId && item.status === "running")
+    .map(publicSnapshot);
 }
