@@ -145,12 +145,15 @@ function registerIpc(): void {
     return apiRequest(`/api/projects/${encodeURIComponent(id)}/edit-proposals/${encodeURIComponent(proposalId)}`);
   });
 
-  ipcMain.handle("edits:apply", async (event, id: unknown, proposalId: unknown) => {
+  ipcMain.handle("edits:apply", async (event, id: unknown, proposalId: unknown, approvalGranted: unknown) => {
     assertTrustedRenderer(event);
-    if (typeof id !== "string" || id.length > 64 || typeof proposalId !== "string") {
-      throw new Error("Invalid edit proposal reference");
+    if (typeof id !== "string" || id.length > 64 || typeof proposalId !== "string" || approvalGranted !== true) {
+      throw new Error("Explicit approval is required to apply this edit proposal");
     }
-    return apiRequest(`/api/projects/${encodeURIComponent(id)}/edit-proposals/${encodeURIComponent(proposalId)}/apply`, { method: "POST" });
+    return apiRequest(`/api/projects/${encodeURIComponent(id)}/edit-proposals/${encodeURIComponent(proposalId)}/apply`, {
+      method: "POST",
+      body: JSON.stringify({ approved: true })
+    });
   });
 
   ipcMain.handle("edits:reject", async (event, id: unknown, proposalId: unknown) => {
