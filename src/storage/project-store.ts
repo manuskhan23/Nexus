@@ -39,6 +39,7 @@ export interface EditProposal {
   changes: EditProposalChange[];
   createdAt: string;
   completedAt?: string;
+  snapshotIds?: string[];
   failureMessage?: string;
 }
 
@@ -194,17 +195,18 @@ export const projectStore = {
     id: string,
     status: "applied" | "rejected" | "failed",
     completedAt: string,
-    failureMessage?: string
+    failureMessage?: string,
+    snapshotIds?: string[]
   ): Promise<void> {
     const { editProposals } = await collections();
-    await editProposals.updateOne({ projectId, id }, {
-      $set: {
-        status,
-        completedAt,
-        ...(failureMessage ? { failureMessage: failureMessage.slice(0, 500) } : {})
-      },
-      $unset: failureMessage ? {} : { failureMessage: "" }
-    });
+    const set: Record<string, unknown> = {
+      status,
+      completedAt,
+      ...(failureMessage ? { failureMessage: failureMessage.slice(0, 500) } : {}),
+      ...(snapshotIds ? { snapshotIds } : {})
+    };
+    const update = failureMessage ? { $set: set } : { $set: set, $unset: { failureMessage: "" } };
+    await editProposals.updateOne({ projectId, id }, update);
   },
   async close(): Promise<void> {
     await client?.close();
