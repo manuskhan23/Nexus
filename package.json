@@ -12,7 +12,7 @@
     "build": "tsc && vite build --config vite.config.ts",
     "start": "electron .",
     "typecheck": "tsc --noEmit",
-    "test": "tsx --test src/code-editing/diff.test.ts src/code-editing/patch.test.ts src/code-editing/edit-service.test.ts src/tasks/task-service.test.ts"
+    "test": "tsx --test src/code-editing/diff.test.ts src/code-editing/patch.test.ts src/code-editing/edit-service.test.ts src/tasks/task-service.test.ts src/tools/tool-registry.test.ts"
   },
   "dependencies": {
     "express": "^5.1.0",
