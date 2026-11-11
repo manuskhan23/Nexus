@@ -22,6 +22,16 @@ export interface FileSnapshot {
   blobKey: string;
 }
 
+export interface ToolExecutionRecord {
+  id: string;
+  toolId: string;
+  projectId: string;
+  status: "started" | "completed" | "failed";
+  at: string;
+  durationMs?: number;
+  error?: string;
+}
+
 export type TaskStatus = "pending" | "planning" | "awaiting_approval" | "running" | "paused" | "failed" | "completed" | "cancelled";
 export type TaskStepStatus = "pending" | "running" | "completed" | "failed" | "skipped";
 
@@ -91,6 +101,7 @@ interface StoredFile extends IndexedFile {
 interface StoredSnapshot extends FileSnapshot {}
 interface StoredEditProposal extends EditProposal {}
 interface StoredTask extends TaskRecord {}
+interface StoredToolExecution extends ToolExecutionRecord {}
 
 let client: MongoClient | undefined;
 let database: Db | undefined;
@@ -115,7 +126,9 @@ async function connect(): Promise<void> {
         database.collection<StoredEditProposal>("edit_proposals").createIndex({ id: 1 }, { unique: true }),
         database.collection<StoredEditProposal>("edit_proposals").createIndex({ projectId: 1, createdAt: -1 }),
         database.collection<StoredTask>("tasks").createIndex({ id: 1 }, { unique: true }),
-        database.collection<StoredTask>("tasks").createIndex({ projectId: 1, updatedAt: -1 })
+        database.collection<StoredTask>("tasks").createIndex({ projectId: 1, updatedAt: -1 }),
+        database.collection<StoredToolExecution>("tool_executions").createIndex({ id: 1, status: 1 }),
+        database.collection<StoredToolExecution>("tool_executions").createIndex({ projectId: 1, at: -1 })
       ]);
     })();
   }
@@ -136,6 +149,7 @@ async function collections(): Promise<{
   snapshots: Collection<StoredSnapshot>;
   editProposals: Collection<StoredEditProposal>;
   tasks: Collection<StoredTask>;
+  toolExecutions: Collection<StoredToolExecution>;
 }> {
   await connect();
   return {
@@ -143,7 +157,8 @@ async function collections(): Promise<{
     files: database!.collection<StoredFile>("project_files"),
     snapshots: database!.collection<StoredSnapshot>("file_snapshots"),
     editProposals: database!.collection<StoredEditProposal>("edit_proposals"),
-    tasks: database!.collection<StoredTask>("tasks")
+    tasks: database!.collection<StoredTask>("tasks"),
+    toolExecutions: database!.collection<StoredToolExecution>("tool_executions")
   };
 }
 
@@ -273,6 +288,15 @@ export const projectStore = {
     const { tasks } = await collections();
     const result = await tasks.replaceOne({ projectId: task.projectId, id: task.id, updatedAt: expectedUpdatedAt }, task);
     return result.modifiedCount === 1;
+  },
+  async addToolExecution(event: ToolExecutionRecord): Promise<void> {
+    const { toolExecutions } = await collections();
+    await toolExecutions.insertOne(event);
+  },
+  async listToolExecutions(projectId: string, limit = 100): Promise<ToolExecutionRecord[]> {
+    const { toolExecutions } = await collections();
+    return toolExecutions.find({ projectId }, { projection: { _id: 0 } })
+      .sort({ at: -1 }).limit(Math.max(1, Math.min(limit, 500))).toArray();
   },
   async close(): Promise<void> {
     await client?.close();
