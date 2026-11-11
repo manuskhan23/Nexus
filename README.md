@@ -35,7 +35,8 @@ The repository was empty at the start. The stack is Electron main/preload, a Rea
 - Semantic retrieval, conversation context, memory retrieval, and provider summarization are not implemented.
 - Phase 3: reviewable file edit proposals are in progress. Read, create, modify, delete, and move operations can be staged in multi-file proposals, previewed, conflict-checked, and explicitly approved. Proposal content is stored in local app data and each changed source file receives a recovery snapshot. AI generation, patch-format input, test execution as part of apply, and deeper integration tests remain open.
 - Phase 4: file snapshots, bounded comparison, and hash-checked restore are implemented. Project-wide snapshots, deduplication, redo, and edit operation integration are still open.
-- Phases 5–16 remain open. The product is not production-ready.
+- Phase 5: persisted dependency-aware task plans and manual task/step state tracking are in progress. Automatic AI planning, background execution, cancellation/recovery checkpoints, and integrated tools remain open.
+- Phases 6–16 remain open. The product is not production-ready.
 - See [the engineering audit and dependency-aware roadmap](docs/engineering-audit-and-roadmap.md) for the completion matrix and acceptance work.
 
 Set MONGODB_URI in the environment available to the Electron process. MONGODB_DATABASE is optional and defaults to nexus. Never commit credentials.
