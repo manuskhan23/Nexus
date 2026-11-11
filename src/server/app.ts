@@ -229,6 +229,113 @@ export function createApiApp(apiToken: string): express.Express {
     }
   });
 
+  app.post("/api/projects/:id/browser/session", async (request, response) => {
+    if (request.body?.approved !== true) {
+      response.status(403).json({ error: "Explicit approval is required to start a browser session" });
+      return;
+    }
+    try {
+      const execution = await toolRegistry.execute("browser.start", { projectId: request.params.id },
+        { projectId: request.params.id, approved: true });
+      response.status(201).json(execution.result);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Browser session could not be started";
+      response.status(message.includes("Project not found") ? 404 : 400).json({ error: message });
+    }
+  });
+
+  app.post("/api/projects/:id/browser/:sessionId/navigate", async (request, response) => {
+    if (request.body?.approved !== true) {
+      response.status(403).json({ error: "Explicit approval is required before browser navigation" });
+      return;
+    }
+    const url: unknown = request.body?.url;
+    if (typeof url !== "string" || url.length > 4096) {
+      response.status(400).json({ error: "A URL of at most 4096 characters is required" });
+      return;
+    }
+    try {
+      const execution = await toolRegistry.execute("browser.navigate", {
+        projectId: request.params.id, sessionId: request.params.sessionId, url
+      }, { projectId: request.params.id, approved: true });
+      response.json(execution.result);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Browser navigation failed";
+      response.status(message.includes("not found") ? 404 : 400).json({ error: message });
+    }
+  });
+
+  app.get("/api/projects/:id/browser/:sessionId/snapshot", async (request, response) => {
+    try {
+      const execution = await toolRegistry.execute("browser.snapshot", {
+        projectId: request.params.id, sessionId: request.params.sessionId
+      }, { projectId: request.params.id, approved: false });
+      response.json(execution.result);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Page snapshot failed";
+      response.status(message.includes("not found") ? 404 : 400).json({ error: message });
+    }
+  });
+
+  app.post("/api/projects/:id/browser/:sessionId/click", async (request, response) => {
+    if (request.body?.approved !== true) {
+      response.status(403).json({ error: "Explicit approval is required before clicking a page element" });
+      return;
+    }
+    const selector: unknown = request.body?.selector;
+    if (typeof selector !== "string" || selector.length > 2000) {
+      response.status(400).json({ error: "A selector of at most 2000 characters is required" });
+      return;
+    }
+    try {
+      const execution = await toolRegistry.execute("browser.click", {
+        projectId: request.params.id, sessionId: request.params.sessionId, selector
+      }, { projectId: request.params.id, approved: true });
+      response.json(execution.result);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Browser click failed";
+      response.status(message.includes("not found") ? 404 : 400).json({ error: message });
+    }
+  });
+
+  app.post("/api/projects/:id/browser/:sessionId/fill", async (request, response) => {
+    if (request.body?.approved !== true) {
+      response.status(403).json({ error: "Explicit approval is required before filling a page field" });
+      return;
+    }
+    const { selector, value } = request.body ?? {};
+    if (typeof selector !== "string" || selector.length > 2000 ||
+        typeof value !== "string" || value.length > 2000) {
+      response.status(400).json({ error: "A selector and text of at most 2000 characters are required" });
+      return;
+    }
+    try {
+      const execution = await toolRegistry.execute("browser.fill", {
+        projectId: request.params.id, sessionId: request.params.sessionId, selector, value
+      }, { projectId: request.params.id, approved: true });
+      response.json(execution.result);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Browser field update failed";
+      response.status(message.includes("not found") ? 404 : 400).json({ error: message });
+    }
+  });
+
+  app.post("/api/projects/:id/browser/:sessionId/close", async (request, response) => {
+    if (request.body?.approved !== true) {
+      response.status(403).json({ error: "Explicit approval is required to close the browser session" });
+      return;
+    }
+    try {
+      const execution = await toolRegistry.execute("browser.close", {
+        projectId: request.params.id, sessionId: request.params.sessionId
+      }, { projectId: request.params.id, approved: true });
+      response.json({ closed: execution.result });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Browser session could not be closed";
+      response.status(message.includes("not found") ? 404 : 400).json({ error: message });
+    }
+  });
+
   app.get("/api/projects/:id/terminal/processes", async (request, response) => {
     try {
       const execution = await toolRegistry.execute("terminal.list", { projectId: request.params.id },
