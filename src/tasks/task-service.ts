@@ -114,7 +114,7 @@ export async function transitionTask(projectId: string, id: string, next: TaskSt
   const task = await projectStore.getTask(projectId, id);
   if (!task) throw new Error("Task not found");
   if (!canTransitionTask(task.status, next)) throw new Error(`Invalid task transition: ${task.status} to ${next}`);
-  if (next === "completed" && task.steps.some((step) => step.status !== "completed")) {
+  if (next === "completed" && task.steps.some((step) => step.status !== "completed" && step.status !== "skipped")) {
     throw new Error("Complete every plan step before completing the task");
   }
   const expectedUpdatedAt = task.updatedAt;
@@ -123,12 +123,15 @@ export async function transitionTask(projectId: string, id: string, next: TaskSt
   task.updatedAt = now;
   if (next === "running" && !task.startedAt) task.startedAt = now;
   if (["completed", "cancelled", "failed"].includes(next)) task.completedAt = now;
+  else if (next === "running" || next === "planning") delete task.completedAt;
   if (next === "running") {
-    task.currentStepId = task.steps.find((step) =>
-      step.status === "pending" && step.dependencies.every((dependency) =>
-        task.steps.find((candidate) => candidate.id === dependency)?.status === "completed"
-      )
-    )?.id ?? null;
+    task.currentStepId = task.steps.find((step) => step.status === "running")?.id ??
+      task.steps.find((step) =>
+        step.status === "pending" && step.dependencies.every((dependency) => {
+          const dependencyStatus = task.steps.find((candidate) => candidate.id === dependency)?.status;
+          return dependencyStatus === "completed" || dependencyStatus === "skipped";
+        })
+      )?.id ?? null;
   }
   if (next === "failed") task.error = redactSecrets(note).slice(0, 500);
   else if (next === "running" || next === "planning") delete task.error;
@@ -170,10 +173,10 @@ export async function transitionTaskStep(
   if (next === "running") step.startedAt = now;
   if (next === "completed" || next === "failed" || next === "skipped") step.completedAt = now;
   if (result) step.result = redactSecrets(result).slice(0, 2000);
-  task.progress = Math.round(task.steps.filter((candidate) => candidate.status === "completed").length / task.steps.length * 100);
+  task.progress = Math.round(task.steps.filter((candidate) => candidate.status === "completed" || candidate.status === "skipped").length / task.steps.length * 100);
   task.currentStepId = task.steps.find((candidate) => candidate.status === "running")?.id ??
     task.steps.find((candidate) => candidate.status === "pending" && candidate.dependencies.every((dependency) =>
-      task.steps.find((item) => item.id === dependency)?.status === "completed"
+      ["completed", "skipped"].includes(task.steps.find((item) => item.id === dependency)?.status ?? "")
     ))?.id ?? null;
   task.updatedAt = now;
   appendEvent(task, `step.${next}`, result || `Step ${step.title} moved to ${next}`, step.id);
