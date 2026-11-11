@@ -16,6 +16,7 @@ export interface FileSnapshot {
   path: string;
   contentHash: string;
   size: number;
+  mode: number;
   createdAt: string;
   reason: string;
   blobKey: string;
@@ -89,8 +90,7 @@ async function touch(projects: Collection<StoredProject>, id: string, indexedAt:
 export const projectStore = {
   async list(): Promise<ProjectRecord[]> {
     const { projects } = await collections();
-    const documents = await projects.find({}, { projection: { _id: 0 } }).sort({ addedAt: 1 }).toArray();
-    return documents;
+    return projects.find({}, { projection: { _id: 0 } }).sort({ addedAt: 1 }).toArray();
   },
   async get(id: string): Promise<ProjectRecord | undefined> {
     const { projects } = await collections();
@@ -99,10 +99,7 @@ export const projectStore = {
   },
   async listIndexedFiles(id: string): Promise<IndexedFile[]> {
     const { files } = await collections();
-    return files.find(
-      { projectId: id },
-      { projection: { _id: 0, projectId: 0 } }
-    ).toArray();
+    return files.find({ projectId: id }, { projection: { _id: 0, projectId: 0 } }).toArray();
   },
   async add(project: ProjectRecord): Promise<void> {
     const { projects } = await collections();
@@ -139,8 +136,7 @@ export const projectStore = {
   },
   async getSnapshot(projectId: string, snapshotId: string): Promise<FileSnapshot | undefined> {
     const { snapshots } = await collections();
-    const document = await snapshots.findOne({ projectId, id: snapshotId }, { projection: { _id: 0 } });
-    return document ?? undefined;
+    return (await snapshots.findOne({ projectId, id: snapshotId }, { projection: { _id: 0 } })) ?? undefined;
   },
   async listSnapshots(projectId: string, relativePath?: string): Promise<FileSnapshot[]> {
     const { snapshots } = await collections();
