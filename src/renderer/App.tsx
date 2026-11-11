@@ -127,6 +127,7 @@ interface Task {
 interface TaskList { tasks: Task[] }
 interface TerminalResult {
   processId: string;
+  status: "running" | "completed" | "failed";
   exitCode: number | null;
   stdout: string;
   stderr: string;
@@ -134,7 +135,7 @@ interface TerminalResult {
   timedOut: boolean;
   outputTruncated: boolean;
 }
-interface TerminalProcesses { processIds: string[] }
+interface TerminalProcesses { processes: TerminalResult[] }
 
 export function App() {
   const [projects, setProjects] = useState<Project[]>([]);
@@ -160,7 +161,7 @@ export function App() {
   const [terminalShell, setTerminalShell] = useState<"powershell" | "cmd">("powershell");
   const [terminalCwd, setTerminalCwd] = useState("");
   const [terminalResults, setTerminalResults] = useState<Record<string, TerminalResult>>({});
-  const [terminalProcesses, setTerminalProcesses] = useState<Record<string, string[]>>({});
+  const [terminalProcesses, setTerminalProcesses] = useState<Record<string, TerminalResult[]>>({});
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
 
@@ -175,6 +176,39 @@ export function App() {
       setError(cause instanceof Error ? cause.message : "Could not load projects");
     });
   }, [refresh]);
+
+  useEffect(() => {
+    const active = Object.entries(terminalProcesses).flatMap(([projectId, processes]) =>
+      processes.filter((item) => item.status === "running").map((item) => ({ projectId, processId: item.processId }))
+    );
+    if (active.length === 0) return;
+    const timer = window.setInterval(() => {
+      void Promise.all(active.map(async ({ projectId, processId }) => {
+        try {
+          return { projectId, result: await window.nexus.terminal.getProcess(projectId, processId) as TerminalResult };
+        } catch {
+          return null;
+        }
+      })).then((updates) => {
+        const valid = updates.filter((item): item is { projectId: string; result: TerminalResult } => item !== null);
+        if (!valid.length) return;
+        setTerminalResults((current) => {
+          const next = { ...current };
+          for (const item of valid) next[item.projectId] = item.result;
+          return next;
+        });
+        setTerminalProcesses((current) => {
+          const next = { ...current };
+          for (const item of valid) {
+            next[item.projectId] = (next[item.projectId] ?? []).map((process) => process.processId === item.result.processId
+              ? item.result : process).filter((process) => process.status === "running");
+          }
+          return next;
+        });
+      });
+    }, 500);
+    return () => window.clearInterval(timer);
+  }, [terminalProcesses]);
 
   async function run(action: () => Promise<void>) {
     setBusy(true);
@@ -263,20 +297,23 @@ export function App() {
       if (!command) throw new Error("Enter a command to run");
       const approved = window.confirm(`Run this ${terminalShell} command in ${project.name}${terminalCwd.trim() ? " / " + terminalCwd.trim() : ""}?\n\n${command}\n\nThe command can change project files or run other programs.`);
       if (!approved) return;
-      const result = await window.nexus.terminal.run(project.id, {
+      const started = await window.nexus.terminal.run(project.id, {
         command, shell: terminalShell, cwd: terminalCwd.trim() || undefined
-      }, true) as TerminalResult;
+      }, true) as { processId: string };
+      const [result, processList] = await Promise.all([
+        window.nexus.terminal.getProcess(project.id, started.processId) as Promise<TerminalResult>,
+        window.nexus.terminal.listProcesses(project.id) as Promise<TerminalProcesses>
+      ]);
       setTerminalResults((current) => ({ ...current, [project.id]: result }));
-      const processList = await window.nexus.terminal.listProcesses(project.id) as TerminalProcesses;
-      setTerminalProcesses((current) => ({ ...current, [project.id]: processList.processIds }));
-      setNotice(result.timedOut ? "Command timed out and was stopped." : `Command finished with exit code ${result.exitCode}.`);
+      setTerminalProcesses((current) => ({ ...current, [project.id]: processList.processes }));
+      setNotice("Command started. Output and status update while it runs.");
     });
   }
 
   function loadTerminalProcesses(project: Project) {
     return run(async () => {
       const result = await window.nexus.terminal.listProcesses(project.id) as TerminalProcesses;
-      setTerminalProcesses((current) => ({ ...current, [project.id]: result.processIds }));
+      setTerminalProcesses((current) => ({ ...current, [project.id]: result.processes }));
     });
   }
 
@@ -286,7 +323,7 @@ export function App() {
       if (!approved) return;
       await window.nexus.terminal.cancel(project.id, processId, true);
       const result = await window.nexus.terminal.listProcesses(project.id) as TerminalProcesses;
-      setTerminalProcesses((current) => ({ ...current, [project.id]: result.processIds }));
+      setTerminalProcesses((current) => ({ ...current, [project.id]: result.processes }));
     });
   }
 
@@ -516,10 +553,10 @@ export function App() {
                     {terminalResults[project.id].timedOut ? "\n… command timed out" : ""}
                   </pre>
                 )}
-                {(terminalProcesses[project.id] ?? []).map((processId) => (
-                  <div className="snapshot-row" key={processId}>
-                    <code>{processId}</code>
-                    <button className="text-button" onClick={() => void stopTerminalProcess(project, processId)} disabled={busy}>Stop</button>
+                {(terminalProcesses[project.id] ?? []).map((process) => (
+                  <div className="snapshot-row" key={process.processId}>
+                    <code>{process.processId}</code>
+                    <button className="text-button" onClick={() => void stopTerminalProcess(project, process.processId)} disabled={busy}>Stop</button>
                   </div>
                 ))}
               </section>
