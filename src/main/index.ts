@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { app, BrowserWindow, dialog, ipcMain, safeStorage, type IpcMainInvokeEvent } from "electron";
 import { readFile, writeFile, rename, mkdir } from "node:fs/promises";
-import { setProviderCredential, getProviderStatuses, type AIProviderId } from "../ai/provider-service.js";
+import { setProviderCredential, getProviderStatuses, generateText, type AIProviderId } from "../ai/provider-service.js";
 import path from "node:path";
 import { startApiServer, type RunningApi } from "../server/runtime.js";
 
@@ -84,6 +84,15 @@ function registerIpc(): void {
   ipcMain.handle("settings:providers", async (event) => {
     assertTrustedRenderer(event);
     return { providers: getProviderStatuses(), encryptionAvailable: safeStorage.isEncryptionAvailable() };
+  });
+
+  ipcMain.handle("settings:provider-test", async (event, provider: unknown, model: unknown) => {
+    assertTrustedRenderer(event);
+    if ((provider !== "gemini" && provider !== "groq") || typeof model !== "string" || model.length > 120) {
+      throw new Error("Invalid provider test request");
+    }
+    const result = await generateText(provider, model, "Reply briefly.", "Reply with the single word READY.");
+    return { provider: result.provider, model: result.model, text: result.text.slice(0, 200) };
   });
 
   ipcMain.handle("settings:provider-credential", async (event, provider: unknown, credential: unknown) => {
