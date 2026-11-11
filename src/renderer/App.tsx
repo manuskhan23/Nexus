@@ -125,6 +125,7 @@ interface Task {
   events: TaskEvent[];
 }
 interface TaskList { tasks: Task[] }
+interface GeneratedPlanStep { title: string; description: string; dependencies: number[] }
 interface TerminalResult {
   processId: string;
   status: "running" | "completed" | "failed";
@@ -168,6 +169,8 @@ export function App() {
   const [taskTitle, setTaskTitle] = useState("");
   const [taskDescription, setTaskDescription] = useState("");
   const [taskPlan, setTaskPlan] = useState("");
+  const [generatedTaskPlan, setGeneratedTaskPlan] = useState<GeneratedPlanStep[]>([]);
+  const [planningProvider, setPlanningProvider] = useState<"gemini" | "groq">("gemini");
   const [taskPriority, setTaskPriority] = useState<"low" | "normal" | "high">("normal");
   const [tasksByProject, setTasksByProject] = useState<Record<string, Task[]>>({});
   const [terminalCommand, setTerminalCommand] = useState("");
@@ -466,11 +469,30 @@ export function App() {
     });
   }
 
+  function generatePlannedTask(project: Project) {
+    return run(async () => {
+      if (!taskTitle.trim() || !taskDescription.trim()) throw new Error("Enter a task title and description first");
+      const model = providerModels[planningProvider].trim();
+      if (!providerConfigured[planningProvider]) throw new Error(`${planningProvider} is not configured in AI provider settings`);
+      if (!model) throw new Error(`Enter the ${planningProvider} model identifier in AI provider settings`);
+      const approved = window.confirm(
+        `Send this task title and description plus up to 8 bounded repository excerpts to ${planningProvider} model ${model} for plan generation? Do not include secrets. The generated plan will be reviewed before saving.\n\n${taskTitle.trim()}\n\n${taskDescription.trim()}`
+      );
+      if (!approved) return;
+      const result = await window.nexus.tasks.plan(project.id, {
+        provider: planningProvider, model, title: taskTitle.trim(), description: taskDescription.trim()
+      }, true) as { steps: GeneratedPlanStep[] };
+      setGeneratedTaskPlan(result.steps);
+      setTaskPlan(result.steps.map((step) => step.title).join("\n"));
+      setNotice(`Generated a ${result.steps.length}-step plan. Review it below before saving.`);
+    });
+  }
+
   function createPlannedTask(project: Project) {
     return run(async () => {
       const lines = taskPlan.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
       if (!lines.length) throw new Error("Enter at least one plan step");
-      const steps = lines.map((title, index) => ({
+      const steps = generatedTaskPlan.length ? generatedTaskPlan : lines.map((title, index) => ({
         title,
         dependencies: index === 0 ? [] : [index - 1]
       }));
@@ -771,14 +793,32 @@ export function App() {
                     maxLength={160} placeholder="Task title" aria-label="Task title" />
                   <textarea value={taskDescription} onChange={(event) => setTaskDescription(event.target.value)}
                     maxLength={4000} placeholder="Describe the intended outcome" aria-label="Task description" />
-                  <textarea value={taskPlan} onChange={(event) => setTaskPlan(event.target.value)}
+                  <textarea value={taskPlan} onChange={(event) => {
+                    setTaskPlan(event.target.value);
+                    setGeneratedTaskPlan([]);
+                  }}
                     placeholder={"One plan step per line\nInspect existing code\nImplement the change\nVerify the result"} aria-label="Task plan steps" />
+                  {generatedTaskPlan.length > 0 && (
+                    <ol className="task-steps">
+                      {generatedTaskPlan.map((step, index) => (
+                        <li key={index}>
+                          <span>{step.title}{step.dependencies.length ? ` · depends on step(s) ${step.dependencies.map((dependency) => dependency + 1).join(", ")}` : ""}</span>
+                          {step.description && <small className="muted">{step.description}</small>}
+                        </li>
+                      ))}
+                    </ol>
+                  )}
                   <div className="actions">
                     <select value={taskPriority} onChange={(event) => setTaskPriority(event.target.value as typeof taskPriority)} aria-label="Task priority">
                       <option value="low">Low priority</option>
                       <option value="normal">Normal priority</option>
                       <option value="high">High priority</option>
                     </select>
+                    <select value={planningProvider} onChange={(event) => setPlanningProvider(event.target.value as typeof planningProvider)} aria-label="AI planning provider">
+                      <option value="gemini">Gemini</option>
+                      <option value="groq">Groq</option>
+                    </select>
+                    <button className="text-button" onClick={() => void generatePlannedTask(project)} disabled={busy || !taskTitle.trim() || !taskDescription.trim()}>Generate AI plan</button>
                     <button className="secondary-button" onClick={() => void createPlannedTask(project)} disabled={busy || !taskTitle.trim()}>Save plan</button>
                   </div>
                 </div>
