@@ -149,13 +149,15 @@ export async function startCommand(
     clearTimeout(item.timer);
     pruneHistory();
   });
-  child.once("close", (code) => {
+  const markExited = (code: number | null) => {
     item.status = code === 0 && !item.timedOut ? "completed" : "failed";
     item.exitCode = code;
     item.durationMs = Date.now() - startedAtMs;
     clearTimeout(item.timer);
     pruneHistory();
-  });
+  };
+  child.once("exit", (code) => markExited(code));
+  child.once("close", (code) => markExited(code));
   pruneHistory();
   return { processId };
 }
