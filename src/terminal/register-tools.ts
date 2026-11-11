@@ -1,7 +1,7 @@
 import type { ToolRegistry } from "../tools/tool-registry.js";
-import { cancelCommand, listOwnedProcesses, runCommand } from "./process-manager.js";
+import { cancelCommand, listOwnedProcesses, runCommand, type CommandRequest } from "./process-manager.js";
 
-function validateCommand(input: unknown) {
+function validateCommand(input: unknown): CommandRequest {
   if (!input || typeof input !== "object" || Array.isArray(input)) throw new Error("Command input must be an object");
   const value = input as Record<string, unknown>;
   if (typeof value.projectId !== "string" || typeof value.command !== "string" ||
