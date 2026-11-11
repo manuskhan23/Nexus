@@ -4,15 +4,12 @@ import express from "express";
 import path from "node:path";
 import { searchProjectContext } from "../context/context-service.js";
 import {
-  applyEditProposal,
   getEditProposal,
-  prepareEditProposal,
-  readProjectFile,
-  rejectEditProposal,
   type EditChangeInput
 } from "../code-editing/edit-service.js";
 import { createTask, transitionTask, transitionTaskStep, type TaskStepInput } from "../tasks/task-service.js";
 import type { TaskStatus, TaskStepStatus } from "../storage/project-store.js";
+import { toolRegistry } from "../tools/app-tools.js";
 import { scanProject } from "../project-intelligence/scanner.js";
 import { watchProject, unwatchProject } from "../project-intelligence/watcher.js";
 import { createFileSnapshot, diffFileSnapshot, restoreFileSnapshot } from "../version-history/snapshot-service.js";
@@ -114,7 +111,11 @@ export function createApiApp(apiToken: string): express.Express {
       return;
     }
     try {
-      response.json(await readProjectFile(request.params.id, filePath));
+      const execution = await toolRegistry.execute("files.read", {
+        projectId: request.params.id,
+        path: filePath
+      }, { projectId: request.params.id, approved: false });
+      response.json(execution.result);
     } catch (error) {
       const message = error instanceof Error ? error.message : "File read failed";
       const status = message === "Project not found" ? 404 : 400;
@@ -171,7 +172,12 @@ export function createApiApp(apiToken: string): express.Express {
       });
     }
     try {
-      response.status(201).json(await prepareEditProposal(request.params.id, title, changes));
+      const execution = await toolRegistry.execute("edits.prepare", {
+        projectId: request.params.id,
+        title,
+        changes
+      }, { projectId: request.params.id, approved: false });
+      response.status(201).json(execution.result);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Edit proposal creation failed";
       const status = message === "Project not found" ? 404 :
@@ -191,8 +197,16 @@ export function createApiApp(apiToken: string): express.Express {
   });
 
   app.post("/api/projects/:id/edit-proposals/:proposalId/apply", async (request, response) => {
+    if (request.body?.approved !== true) {
+      response.status(403).json({ error: "Explicit approval is required to apply file changes" });
+      return;
+    }
     try {
-      response.json(await applyEditProposal(request.params.id, request.params.proposalId));
+      const execution = await toolRegistry.execute("edits.apply", {
+        projectId: request.params.id,
+        proposalId: request.params.proposalId
+      }, { projectId: request.params.id, approved: true });
+      response.json(execution.result);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Edit proposal could not be applied";
       const status = message === "Project not found" || message === "Edit proposal not found" ? 404 : 409;
@@ -202,7 +216,11 @@ export function createApiApp(apiToken: string): express.Express {
 
   app.post("/api/projects/:id/edit-proposals/:proposalId/reject", async (request, response) => {
     try {
-      await rejectEditProposal(request.params.id, request.params.proposalId);
+      const execution = await toolRegistry.execute("edits.reject", {
+        projectId: request.params.id,
+        proposalId: request.params.proposalId
+      }, { projectId: request.params.id, approved: false });
+      if (!(execution.result as { rejected?: boolean }).rejected) throw new Error("Proposal rejection failed");
       response.status(204).end();
     } catch (error) {
       const message = error instanceof Error ? error.message : "Edit proposal could not be rejected";
