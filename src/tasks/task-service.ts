@@ -60,9 +60,9 @@ export function canTransitionTask(current: TaskStatus, next: TaskStatus): boolea
 
 function redactSecrets(value: string): string {
   return value
-    .replace(/((?:password|passwd|secret|api[_-]?key|access[_-]?token|refresh[_-]?token)\\s*[:=]\\s*)[^\\s,;]+/gi, "$1[redacted]")
-    .replace(/mongodb(?:\\+srv)?:\\/\\/[^@\\s]+@/gi, "mongodb://[redacted]@")
-    .replace(/-----BEGIN [^-]*PRIVATE KEY-----[\\s\\S]*?-----END [^-]*PRIVATE KEY-----/g, "[redacted private key]");
+    .replace(/((?:password|passwd|secret|api[_-]?key|access[_-]?token|refresh[_-]?token)\s*[:=]\s*)[^\s,;]+/gi, "$1[redacted]")
+    .replace(/mongodb(?:\+srv)?:\/\/[^@\s]+@/gi, "mongodb://[redacted]@")
+    .replace(/-----BEGIN [^-]*PRIVATE KEY-----[\s\S]*?-----END [^-]*PRIVATE KEY-----/g, "[redacted private key]");
 }
 
 function appendEvent(task: TaskRecord, type: string, message: string, stepId?: string): void {
