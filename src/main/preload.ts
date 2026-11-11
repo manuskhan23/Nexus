@@ -26,6 +26,14 @@ const terminal = Object.freeze({
     ipcRenderer.invoke("terminal:cancel", projectId, processId, approvalGranted)
 });
 
+const settings = Object.freeze({
+  listProviders: () => ipcRenderer.invoke("settings:providers"),
+  saveProviderCredential: (provider: "gemini" | "groq", credential: string | null) =>
+    ipcRenderer.invoke("settings:provider-credential", provider, credential),
+  testProvider: (provider: "gemini" | "groq", model: string) =>
+    ipcRenderer.invoke("settings:provider-test", provider, model)
+});
+
 const browser = Object.freeze({
   start: (projectId: string, approvalGranted: boolean) =>
     ipcRenderer.invoke("browser:start", projectId, approvalGranted),
@@ -64,4 +72,4 @@ const edits = Object.freeze({
   reject: (projectId: string, proposalId: string) => ipcRenderer.invoke("edits:reject", projectId, proposalId)
 });
 
-contextBridge.exposeInMainWorld("nexus", Object.freeze({ projects, snapshots, files, edits, tasks, terminal, browser }));
+contextBridge.exposeInMainWorld("nexus", Object.freeze({ projects, snapshots, files, edits, tasks, terminal, browser, settings }));
