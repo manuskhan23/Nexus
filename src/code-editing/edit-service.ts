@@ -24,8 +24,9 @@ export interface FileReadResult {
 
 export interface EditChangeInput {
   path: string;
-  action: "write" | "delete";
+  action: "write" | "delete" | "move";
   expectedHash: string | null;
+  destinationPath?: string;
   content?: string;
 }
 
@@ -161,6 +162,21 @@ export async function prepareEditProposal(
       staged.push({ change: { path: filePath, action: "delete", expectedHash: currentHash, size: current.bytes.length } });
       continue;
     }
+    if (input.action === "move") {
+      if (!current || typeof input.destinationPath !== "string") {
+        throw new Error("Moving a file requires an existing source and a destination path");
+      }
+      const destinationPath = normalizeEditPath(input.destinationPath);
+      if (destinationPath === filePath) throw new Error("Source and destination paths are the same");
+      if (await findProjectFile(root, destinationPath)) throw new Error(`Move destination already exists: ${destinationPath}`);
+      totalBytes += current.bytes.length;
+      if (totalBytes > MAX_PROPOSAL_BYTES) throw new Error("Proposal content exceeds the 4 MiB limit");
+      staged.push({
+        bytes: current.bytes,
+        change: { path: filePath, action: "move", destinationPath, expectedHash: currentHash, size: current.bytes.length }
+      });
+      continue;
+    }
     if (input.action !== "write" || typeof input.content !== "string") {
       throw new Error("Write changes require text content");
     }
@@ -232,9 +248,11 @@ export async function getEditProposal(projectId: string, id: string): Promise<Ed
       path: change.path,
       action: change.action,
       expectedHash: change.expectedHash,
+      ...(change.destinationPath ? { destinationPath: change.destinationPath } : {}),
       size: change.size,
       currentHash,
-      conflict: currentHash !== change.expectedHash,
+      conflict: currentHash !== change.expectedHash ||
+        (change.action === "move" && Boolean(await findProjectFile(root, change.destinationPath!))),
       diff: diff.lines,
       diffTruncated: diff.truncated
     });
@@ -297,10 +315,13 @@ export async function applyEditProposal(projectId: string, id: string): Promise<
 
   const stagedBytes = new Map<EditProposalChange, Buffer>();
   for (const change of proposal.changes) {
-    if (change.action === "write") stagedBytes.set(change, await readStagedContent(change));
+    if (change.action === "write" || change.action === "move") stagedBytes.set(change, await readStagedContent(change));
     const current = await findProjectFile(root, change.path);
     if ((current ? hash(current.bytes) : null) !== change.expectedHash) {
       throw new Error(`File changed since proposal review: ${change.path}`);
+    }
+    if (change.action === "move" && await findProjectFile(root, change.destinationPath!)) {
+      throw new Error(`Move destination changed since proposal review: ${change.destinationPath}`);
     }
   }
   if (!(await projectStore.claimEditProposal(projectId, id))) throw new Error("Proposal is no longer pending");
@@ -324,15 +345,24 @@ export async function applyEditProposal(projectId: string, id: string): Promise<
       if ((current ? hash(current.bytes) : null) !== change.expectedHash) {
         throw new Error(`File changed during apply: ${change.path}`);
       }
-      const absolute = resolveProjectPath(root, change.path);
-      if (change.action === "delete") {
-        if (current) await unlink(absolute);
+      if (change.action === "move") {
+        if (!current || await findProjectFile(root, change.destinationPath!)) {
+          throw new Error(`Move destination changed during apply: ${change.destinationPath}`);
+        }
+        const destination = resolveProjectPath(root, change.destinationPath!);
+        const parent = await ensureParentDirectories(root, change.destinationPath!);
+        const bytes = stagedBytes.get(change);
+        if (!bytes) throw new Error("Staged move content is unavailable");
+        await atomicWrite(path.join(parent, path.basename(destination)), bytes, current.mode);
+        await unlink(current.absolute);
+      } else if (change.action === "delete") {
+        if (current) await unlink(current.absolute);
       } else {
+        const absolute = resolveProjectPath(root, change.path);
         const parent = await ensureParentDirectories(root, change.path);
-        const target = path.join(parent, path.basename(absolute));
         const bytes = stagedBytes.get(change);
         if (!bytes) throw new Error("Staged edit content is unavailable");
-        await atomicWrite(target, bytes, current?.mode ?? 0o644);
+        await atomicWrite(path.join(parent, path.basename(absolute)), bytes, current?.mode ?? 0o644);
       }
       applied.push(change);
     }
@@ -342,9 +372,33 @@ export async function applyEditProposal(projectId: string, id: string): Promise<
     return { status: "applied", snapshotIds: recoveryIds };
   } catch (error) {
     const rollbackFailures: string[] = [];
-    for (const change of [...applied].reverse()) {
+    for (const change of [...proposal.changes].reverse()) {
       try {
         const snapshotId = snapshotIds.get(change.path);
+        if (change.action === "move") {
+          const destination = await findProjectFile(root, change.destinationPath!);
+          const staged = stagedBytes.get(change);
+          if (destination && staged && hash(destination.bytes) === hash(staged)) {
+            await unlink(destination.absolute);
+          } else if (destination) {
+            rollbackFailures.push(change.destinationPath!);
+            continue;
+          }
+          const source = await findProjectFile(root, change.path);
+          if (source && hash(source.bytes) === change.expectedHash) continue;
+          if (!snapshotId) {
+            rollbackFailures.push(change.path);
+            continue;
+          }
+          const comparison = await diffFileSnapshot(projectId, snapshotId);
+          if (comparison.currentHash !== null) {
+            rollbackFailures.push(change.path);
+            continue;
+          }
+          await restoreFileSnapshot(projectId, snapshotId, null);
+          continue;
+        }
+        if (!applied.includes(change)) continue;
         if (snapshotId) {
           const comparison = await diffFileSnapshot(projectId, snapshotId);
           const expectedAfter = change.action === "write"
