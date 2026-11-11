@@ -32,6 +32,13 @@ declare global {
         getProcess(projectId: string, processId: string): Promise<unknown>;
         cancel(projectId: string, processId: string, approvalGranted: boolean): Promise<unknown>;
       };
+      memories: {
+        list(projectId: string): Promise<unknown>;
+        create(projectId: string, scope: "user" | "project", title: string, content: string): Promise<unknown>;
+        update(projectId: string, memoryId: string, input: unknown): Promise<unknown>;
+        remove(projectId: string, memoryId: string): Promise<boolean>;
+        export(projectId: string): Promise<boolean>;
+      };
       settings: {
         listProviders(): Promise<unknown>;
         saveProviderCredential(provider: "gemini" | "groq", credential: string | null): Promise<unknown>;
