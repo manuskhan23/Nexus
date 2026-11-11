@@ -17,6 +17,14 @@ const snapshots = Object.freeze({
     ipcRenderer.invoke("snapshots:restore", projectId, snapshotId, expectedCurrentHash)
 });
 
+const terminal = Object.freeze({
+  run: (projectId: string, input: unknown, approvalGranted: boolean) =>
+    ipcRenderer.invoke("terminal:run", projectId, input, approvalGranted),
+  listProcesses: (projectId: string) => ipcRenderer.invoke("terminal:processes", projectId),
+  cancel: (projectId: string, processId: string, approvalGranted: boolean) =>
+    ipcRenderer.invoke("terminal:cancel", projectId, processId, approvalGranted)
+});
+
 const tasks = Object.freeze({
   list: (projectId: string) => ipcRenderer.invoke("tasks:list", projectId),
   create: (projectId: string, input: unknown) => ipcRenderer.invoke("tasks:create", projectId, input),
@@ -40,4 +48,4 @@ const edits = Object.freeze({
   reject: (projectId: string, proposalId: string) => ipcRenderer.invoke("edits:reject", projectId, proposalId)
 });
 
-contextBridge.exposeInMainWorld("nexus", Object.freeze({ projects, snapshots, files, edits, tasks }));
+contextBridge.exposeInMainWorld("nexus", Object.freeze({ projects, snapshots, files, edits, tasks, terminal }));
