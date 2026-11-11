@@ -189,6 +189,62 @@ function registerIpc(): void {
     });
   });
 
+  ipcMain.handle("memories:list", async (event, id: unknown) => {
+    assertTrustedRenderer(event);
+    if (typeof id !== "string" || id.length > 64) throw new Error("Invalid project identifier");
+    return apiRequest(`/api/projects/${encodeURIComponent(id)}/memories`);
+  });
+
+  ipcMain.handle("memories:create", async (event, id: unknown, scope: unknown, title: unknown, content: unknown) => {
+    assertTrustedRenderer(event);
+    if (typeof id !== "string" || id.length > 64 || (scope !== "user" && scope !== "project") ||
+        typeof title !== "string" || title.length > 120 || typeof content !== "string" || content.length > 4000) {
+      throw new Error("Invalid memory details");
+    }
+    return apiRequest(`/api/projects/${encodeURIComponent(id)}/memories`, {
+      method: "POST", body: JSON.stringify({ scope, title, content })
+    });
+  });
+
+  ipcMain.handle("memories:update", async (event, id: unknown, memoryId: unknown, input: unknown) => {
+    assertTrustedRenderer(event);
+    if (typeof id !== "string" || id.length > 64 || typeof memoryId !== "string" || memoryId.length > 64 ||
+        !input || typeof input !== "object") throw new Error("Invalid memory update");
+    const value = input as Record<string, unknown>;
+    if ((value.title !== undefined && (typeof value.title !== "string" || value.title.length > 120)) ||
+        (value.content !== undefined && (typeof value.content !== "string" || value.content.length > 4000)) ||
+        (value.enabled !== undefined && typeof value.enabled !== "boolean")) throw new Error("Invalid memory update");
+    return apiRequest(`/api/projects/${encodeURIComponent(id)}/memories/${encodeURIComponent(memoryId)}`, {
+      method: "PUT", body: JSON.stringify(value)
+    });
+  });
+
+  ipcMain.handle("memories:remove", async (event, id: unknown, memoryId: unknown) => {
+    assertTrustedRenderer(event);
+    if (typeof id !== "string" || id.length > 64 || typeof memoryId !== "string" || memoryId.length > 64) {
+      throw new Error("Invalid memory reference");
+    }
+    return apiRequest(`/api/projects/${encodeURIComponent(id)}/memories/${encodeURIComponent(memoryId)}`, { method: "DELETE" });
+  });
+
+  ipcMain.handle("memories:export", async (event, id: unknown) => {
+    assertTrustedRenderer(event);
+    if (typeof id !== "string" || id.length > 64) throw new Error("Invalid project identifier");
+    const data = await apiRequest(`/api/projects/${encodeURIComponent(id)}/memories/export`);
+    const result = await dialog.showSaveDialog(windowRef!, {
+      title: "Export NEXUS memories",
+      defaultPath: "nexus-memories.json",
+      filters: [{ name: "JSON", extensions: ["json"] }]
+    });
+    if (result.canceled || !result.filePath) return false;
+    await writeFile(result.filePath, JSON.stringify(data, null, 2), { encoding: "utf8", flag: "wx" })
+      .catch(async (error: NodeJS.ErrnoException) => {
+        if (error.code !== "EEXIST") throw error;
+        await writeFile(result.filePath, JSON.stringify(data, null, 2), { encoding: "utf8" });
+      });
+    return true;
+  });
+
   ipcMain.handle("tasks:list", async (event, id: unknown) => {
     assertTrustedRenderer(event);
     if (typeof id !== "string" || id.length > 64) throw new Error("Invalid project identifier");
