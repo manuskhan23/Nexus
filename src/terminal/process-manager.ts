@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { execFile, type ChildProcess } from "node:child_process";
+import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { realpath } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -97,9 +97,8 @@ export async function startCommand(
   const args = request.shell === "powershell"
     ? ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", request.command + "\nexit $LASTEXITCODE"]
     : ["/d", "/s", "/c", request.command];
-  const child = execFile(request.shell === "powershell" ? "powershell.exe" : "cmd.exe", args, {
-    cwd, env: boundedEnv(), windowsHide: true, maxBuffer: MAX_OUTPUT_BYTES, timeout: 0,
-    stdio: ["ignore", "pipe", "pipe"]
+  const child = spawn(request.shell === "powershell" ? "powershell.exe" : "cmd.exe", args, {
+    cwd, env: boundedEnv(), windowsHide: true, stdio: ["ignore", "pipe", "pipe"]
   });
   const startedAtMs = Date.now();
   const item: OwnedProcess = {
