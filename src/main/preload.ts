@@ -35,7 +35,8 @@ const edits = Object.freeze({
   propose: (projectId: string, title: string, changes: unknown[]) =>
     ipcRenderer.invoke("edits:propose", projectId, title, changes),
   get: (projectId: string, proposalId: string) => ipcRenderer.invoke("edits:get", projectId, proposalId),
-  apply: (projectId: string, proposalId: string) => ipcRenderer.invoke("edits:apply", projectId, proposalId),
+  apply: (projectId: string, proposalId: string, approvalGranted: boolean) =>
+    ipcRenderer.invoke("edits:apply", projectId, proposalId, approvalGranted),
   reject: (projectId: string, proposalId: string) => ipcRenderer.invoke("edits:reject", projectId, proposalId)
 });
 
