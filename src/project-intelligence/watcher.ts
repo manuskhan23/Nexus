@@ -20,7 +20,7 @@ async function rebuild(project: ProjectRecord): Promise<void> {
 
 async function applyChange(project: ProjectRecord, relativePath: string): Promise<void> {
   const normalized = relativePath.replaceAll(path.sep, "/");
-  if (FULL_RESCAN_FILES.has(normalized)) {
+  if (FULL_RESCAN_FILES.has(normalized) || normalized.endsWith("/.gitignore")) {
     await rebuild(project);
     return;
   }
@@ -43,7 +43,8 @@ async function applyChange(project: ProjectRecord, relativePath: string): Promis
   if (indexed) {
     await projectStore.upsertIndexedFile(project.id, indexed, changedAt);
   } else {
-    await projectStore.removeIndexedFile(project.id, relativePath, changedAt);
+    // Index paths use forward slashes on every platform.
+    await projectStore.removeIndexedFile(project.id, normalized, changedAt);
   }
 }
 
