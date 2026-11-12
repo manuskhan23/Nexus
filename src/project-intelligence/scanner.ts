@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { promises as fs } from "node:fs";
 import path from "node:path";
+import { readBoundedRegularFile } from "./bounded-file.js";
 import {
   isIgnoredPath,
   mayContainReincludedPath,
@@ -55,13 +56,10 @@ function stringKeys(value: unknown): string[] {
 }
 
 async function readPackage(root: string): Promise<ProjectScan["package"]> {
-  const file = path.join(root, "package.json");
+  const file = await readBoundedRegularFile(path.join(root, "package.json"), MAX_PACKAGE_BYTES);
+  if (!file || file.bytes.includes(0)) return null;
   try {
-    const info = await fs.lstat(file);
-    if (!info.isFile() || info.isSymbolicLink() || info.size > MAX_PACKAGE_BYTES) return null;
-    const bytes = await fs.readFile(file);
-    if (bytes.length > MAX_PACKAGE_BYTES || bytes.includes(0)) return null;
-    const data: unknown = JSON.parse(bytes.toString("utf8"));
+    const data: unknown = JSON.parse(file.bytes.toString("utf8"));
     if (!isRecord(data)) return null;
     const dependencies = {
       ...(isRecord(data.dependencies) ? data.dependencies : {}),
@@ -93,18 +91,16 @@ function containsDefaultIgnore(relativePath: string): boolean {
 
 function isInsideRoot(root: string, target: string): boolean {
   const relative = path.relative(root, target);
-  return relative !== "" && !relative.startsWith("..") && !path.isAbsolute(relative);
+  return relative !== "" && relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative);
 }
 
 async function readIndexedFile(root: string, absolute: string): Promise<{ bytes: Buffer; modifiedAt: string } | null> {
   try {
-    const info = await fs.lstat(absolute);
-    if (!info.isFile() || info.isSymbolicLink() || info.size > MAX_FILE_BYTES) return null;
     const resolved = await fs.realpath(absolute);
     if (!isInsideRoot(root, resolved)) return null;
-    const bytes = await fs.readFile(resolved);
-    if (bytes.length > MAX_FILE_BYTES || bytes.includes(0)) return null;
-    return { bytes, modifiedAt: info.mtime.toISOString() };
+    const file = await readBoundedRegularFile(resolved, MAX_FILE_BYTES);
+    if (!file || file.bytes.includes(0)) return null;
+    return { bytes: file.bytes, modifiedAt: file.stat.mtime.toISOString() };
   } catch {
     return null;
   }

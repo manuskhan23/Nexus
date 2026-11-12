@@ -18,6 +18,22 @@ test("ignore patterns support comments, negation, globs, and directory scope", (
   assert.equal(isIgnoredPath("/absolute.ts", false, rules), true);
 });
 
+test("bounded file reads reject oversized data and symlinks", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "nexus-bounded-test-"));
+  const outside = await mkdtemp(path.join(os.tmpdir(), "nexus-bounded-outside-"));
+  try {
+    await writeFile(path.join(root, "large.ts"), "x".repeat(1_000_001), "utf8");
+    await writeFile(path.join(outside, "linked.ts"), "export const secret = true;", "utf8");
+    await symlink(path.join(outside, "linked.ts"), path.join(root, "linked.ts"));
+    assert.equal((await scanProject(root)).files.length, 0);
+    assert.equal(await scanProjectFile(root, "large.ts"), null);
+    assert.equal(await scanProjectFile(root, "linked.ts"), null);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+    await rm(outside, { recursive: true, force: true });
+  }
+});
+
 test("ignore file reads reject symlinks and oversized files", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "nexus-ignore-test-"));
   const outside = await mkdtemp(path.join(os.tmpdir(), "nexus-ignore-outside-"));
@@ -25,7 +41,6 @@ test("ignore file reads reject symlinks and oversized files", async () => {
     await writeFile(path.join(outside, "external.gitignore"), "*.ts\n", "utf8");
     await symlink(path.join(outside, "external.gitignore"), path.join(root, "linked.gitignore"));
     assert.deepEqual(await readIgnoreRulesFile(path.join(root, "linked.gitignore")), []);
-
     const oversized = path.join(root, ".gitignore");
     await writeFile(oversized, "x".repeat(256_001), "utf8");
     assert.deepEqual(await readIgnoreRulesFile(oversized), []);
