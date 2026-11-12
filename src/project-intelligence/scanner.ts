@@ -1,7 +1,12 @@
 import { createHash } from "node:crypto";
 import { promises as fs } from "node:fs";
 import path from "node:path";
-import { isIgnoredPath, mayContainReincludedPath, parseIgnoreRules, type IgnoreRule } from "./ignore-rules.js";
+import {
+  isIgnoredPath,
+  mayContainReincludedPath,
+  readIgnoreRulesFile,
+  type IgnoreRule
+} from "./ignore-rules.js";
 
 export interface IndexedFile {
   path: string;
@@ -59,34 +64,27 @@ async function readPackage(root: string): Promise<ProjectScan["package"]> {
     const data: unknown = JSON.parse(bytes.toString("utf8"));
     if (!isRecord(data)) return null;
     const dependencies = {
-      ...((isRecord(data.dependencies) ? data.dependencies : {})),
-      ...((isRecord(data.devDependencies) ? data.devDependencies : {})),
-      ...((isRecord(data.peerDependencies) ? data.peerDependencies : {}))
+      ...(isRecord(data.dependencies) ? data.dependencies : {}),
+      ...(isRecord(data.devDependencies) ? data.devDependencies : {}),
+      ...(isRecord(data.peerDependencies) ? data.peerDependencies : {})
     };
-    const scripts = stringKeys(data.scripts);
     const frameworks = ["react", "next", "vue", "svelte", "express", "electron", "vite", "angular"]
       .filter((name) => Object.hasOwn(dependencies, name));
     return {
       ...(typeof data.name === "string" && data.name.length <= 214 ? { name: data.name } : {}),
-      ...(typeof data.packageManager === "string" && data.packageManager.length <= 120
-        ? { packageManager: data.packageManager } : {}),
-      scripts,
+      ...(typeof data.packageManager === "string" && data.packageManager.length <= 120 ? { packageManager: data.packageManager } : {}),
+      scripts: stringKeys(data.scripts),
       dependencies: Object.keys(dependencies).sort(),
       frameworks
     };
   } catch {
-    // Missing, malformed, symlinked, or unreadable manifests do not fail a project scan.
     return null;
   }
 }
 
 async function rulesForDirectory(directory: string, relativeDirectory: string, inherited: IgnoreRule[]): Promise<IgnoreRule[]> {
-  try {
-    const contents = await fs.readFile(path.join(directory, ".gitignore"), "utf8");
-    return [...inherited, ...parseIgnoreRules(contents, relativeDirectory)];
-  } catch {
-    return inherited;
-  }
+  const localRules = await readIgnoreRulesFile(path.join(directory, ".gitignore"), relativeDirectory);
+  return localRules.length ? [...inherited, ...localRules] : inherited;
 }
 
 function containsDefaultIgnore(relativePath: string): boolean {
@@ -117,7 +115,6 @@ export async function scanProject(inputPath: string): Promise<ProjectScan> {
   const root = await fs.realpath(inputPath);
   const rootStat = await fs.stat(root);
   if (!rootStat.isDirectory()) throw new Error("Project path must be a directory");
-
   const files: IndexedFile[] = [];
   const skipped = { ignored: 0, secret: 0, binaryOrUnsupported: 0, oversized: 0 };
   let visitedDirectories = 0;
@@ -134,8 +131,7 @@ export async function scanProject(inputPath: string): Promise<ProjectScan> {
       if (entry.isSymbolicLink()) { skipped.ignored++; continue; }
       if (entry.isDirectory()) {
         if (containsDefaultIgnore(relative)) { skipped.ignored++; continue; }
-        const ignored = isIgnoredPath(relative, true, rules);
-        if (ignored) {
+        if (isIgnoredPath(relative, true, rules)) {
           skipped.ignored++;
           if (!mayContainReincludedPath(relative, rules)) continue;
         }
@@ -150,7 +146,7 @@ export async function scanProject(inputPath: string): Promise<ProjectScan> {
       const file = await readIndexedFile(root, absolute);
       if (!file) {
         const stat = await fs.lstat(absolute).catch(() => null);
-        if (stat?.size && stat.size > MAX_FILE_BYTES) skipped.oversized++;
+        if (stat && stat.size > MAX_FILE_BYTES) skipped.oversized++;
         else skipped.ignored++;
         continue;
       }

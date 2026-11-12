@@ -1,3 +1,4 @@
+import { lstat, readFile } from "node:fs/promises";
 import path from "node:path";
 
 export interface IgnoreRule {
@@ -9,6 +10,8 @@ export interface IgnoreRule {
   anchored: boolean;
   hasSlash: boolean;
 }
+
+const MAX_IGNORE_FILE_BYTES = 256_000;
 
 function normalize(value: string): string {
   return value.replaceAll("\\", "/").replace(/^\.\//, "").replace(/\/$/, "");
@@ -32,16 +35,22 @@ export function parseIgnoreRules(contents: string, base = ""): IgnoreRule[] {
     const anchored = line.startsWith("/");
     if (anchored) line = line.slice(1);
     if (!line) continue;
-    rules.push({
-      base: normalizedBase,
-      pattern: line,
-      negate,
-      directoryOnly,
-      anchored,
-      hasSlash: line.includes("/")
-    });
+    rules.push({ base: normalizedBase, pattern: line, negate, directoryOnly, anchored, hasSlash: line.includes("/") });
   }
   return rules;
+}
+
+/** Read bounded ignore rules without following symlinks. Invalid/unreadable files contribute no rules. */
+export async function readIgnoreRulesFile(filePath: string, base = ""): Promise<IgnoreRule[]> {
+  try {
+    const info = await lstat(filePath);
+    if (!info.isFile() || info.isSymbolicLink() || info.size > MAX_IGNORE_FILE_BYTES) return [];
+    const contents = await readFile(filePath, "utf8");
+    if (Buffer.byteLength(contents, "utf8") > MAX_IGNORE_FILE_BYTES) return [];
+    return parseIgnoreRules(contents, base);
+  } catch {
+    return [];
+  }
 }
 
 function globRegex(glob: string): RegExp {
@@ -89,7 +98,6 @@ function ruleMatches(rule: IgnoreRule, candidatePath: string, isDirectory: boole
   const matcher = globRegex(rule.pattern);
   if (rule.anchored || rule.hasSlash) {
     if (matcher.test(localPath)) return true;
-    // A matched directory rule also applies to every descendant.
     if (!rule.directoryOnly) return false;
     const segments = localPath.split("/");
     return segments.slice(0, -1).some((_segment, index) => matcher.test(segments.slice(0, index + 1).join("/")));
@@ -120,8 +128,6 @@ export function isIgnoredPath(relativePath: string, isDirectory: boolean, rules:
 /** Whether a currently ignored directory may contain a path re-included by a scoped negation. */
 export function mayContainReincludedPath(relativeDirectory: string, rules: IgnoreRule[]): boolean {
   const directory = normalize(relativeDirectory);
-  return rules.some((rule) => {
-    if (!rule.negate) return false;
-    return !rule.base || directory === rule.base || directory.startsWith(`${rule.base}/`) || rule.base.startsWith(`${directory}/`);
-  });
+  return rules.some((rule) => rule.negate &&
+    (!rule.base || directory === rule.base || directory.startsWith(`${rule.base}/`) || rule.base.startsWith(`${directory}/`)));
 }

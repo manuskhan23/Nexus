@@ -3,7 +3,7 @@ import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promis
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { isIgnoredPath, parseIgnoreRules } from "./ignore-rules.js";
+import { isIgnoredPath, parseIgnoreRules, readIgnoreRulesFile } from "./ignore-rules.js";
 import { scanProject } from "./scanner.js";
 import { scanProjectFile } from "./scan-file.js";
 
@@ -18,6 +18,23 @@ test("ignore patterns support comments, negation, globs, and directory scope", (
   assert.equal(isIgnoredPath("/absolute.ts", false, rules), true);
 });
 
+test("ignore file reads reject symlinks and oversized files", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "nexus-ignore-test-"));
+  const outside = await mkdtemp(path.join(os.tmpdir(), "nexus-ignore-outside-"));
+  try {
+    await writeFile(path.join(outside, "external.gitignore"), "*.ts\n", "utf8");
+    await symlink(path.join(outside, "external.gitignore"), path.join(root, "linked.gitignore"));
+    assert.deepEqual(await readIgnoreRulesFile(path.join(root, "linked.gitignore")), []);
+
+    const oversized = path.join(root, ".gitignore");
+    await writeFile(oversized, "x".repeat(256_001), "utf8");
+    assert.deepEqual(await readIgnoreRulesFile(oversized), []);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+    await rm(outside, { recursive: true, force: true });
+  }
+});
+
 test("nested ignore files are honored by full and incremental indexing", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "nexus-scan-test-"));
   try {
@@ -29,7 +46,6 @@ test("nested ignore files are honored by full and incremental indexing", async (
     await writeFile(path.join(root, "src", ".gitignore"), "generated/\n", "utf8");
     await writeFile(path.join(root, "src", "generated", "hidden.ts"), "export const hidden = true;", "utf8");
     await writeFile(path.join(root, "src", "local", "visible.ts"), "export const visible = true;", "utf8");
-
     const scan = await scanProject(root);
     assert.deepEqual(scan.files.map((file) => file.path).sort(), ["src/local/visible.ts"]);
     assert.equal(await scanProjectFile(root, "src/generated/hidden.ts"), null);
@@ -65,10 +81,7 @@ test("incremental indexing refuses symlinks that escape the project", async (con
     try {
       await symlink(outside, path.join(root, "linked"), process.platform === "win32" ? "junction" : "dir");
     } catch (error) {
-      if (process.platform === "win32") {
-        context.skip(`Symlink creation unavailable: ${error instanceof Error ? error.message : "unknown error"}`);
-        return;
-      }
+      if (process.platform === "win32") { context.skip(`Symlink creation unavailable: ${error instanceof Error ? error.message : "unknown error"}`); return; }
       throw error;
     }
     assert.equal(await scanProjectFile(root, "linked/visible.ts"), null);
@@ -82,10 +95,7 @@ test("package manifest analysis ignores malformed dependency and script shapes",
   const root = await mkdtemp(path.join(os.tmpdir(), "nexus-package-test-"));
   try {
     await writeFile(path.join(root, "package.json"), JSON.stringify({
-      name: "safe-project",
-      dependencies: "not-an-object",
-      devDependencies: { react: "^19.0.0" },
-      scripts: ["not", "an", "object"]
+      name: "safe-project", dependencies: "not-an-object", devDependencies: { react: "^19.0.0" }, scripts: ["not", "an", "object"]
     }), "utf8");
     await writeFile(path.join(root, "src.ts"), "export const app = true;", "utf8");
     const report = await scanProject(root);
@@ -106,14 +116,10 @@ test("scanner does not follow a symlinked package manifest", async (context) => 
     try {
       await symlink(path.join(outside, "package.json"), path.join(root, "package.json"), process.platform === "win32" ? "file" : undefined);
     } catch (error) {
-      if (process.platform === "win32") {
-        context.skip(`Symlink creation unavailable: ${error instanceof Error ? error.message : "unknown error"}`);
-        return;
-      }
+      if (process.platform === "win32") { context.skip(`Symlink creation unavailable: ${error instanceof Error ? error.message : "unknown error"}`); return; }
       throw error;
     }
-    const report = await scanProject(root);
-    assert.equal(report.package, null);
+    assert.equal((await scanProject(root)).package, null);
   } finally {
     await rm(root, { recursive: true, force: true });
     await rm(outside, { recursive: true, force: true });
