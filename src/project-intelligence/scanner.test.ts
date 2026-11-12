@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -14,6 +14,8 @@ test("ignore patterns support comments, negation, globs, and directory scope", (
   assert.equal(isIgnoredPath("src/a/generated1.ts", false, rules), true);
   assert.equal(isIgnoredPath("src/a/keep.ts", false, rules), false);
   assert.equal(isIgnoredPath("cache/item.ts", false, rules), true);
+  assert.equal(isIgnoredPath("../outside.ts", false, rules), true);
+  assert.equal(isIgnoredPath("/absolute.ts", false, rules), true);
 });
 
 test("nested ignore files are honored by full and incremental indexing", async () => {
@@ -51,5 +53,27 @@ test("ignore negation can re-include a file under a non-ignored parent", async (
     assert.equal(await scanProjectFile(root, "output/drop.ts"), null);
   } finally {
     await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("incremental indexing refuses symlinks that escape the project", async (context) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "nexus-symlink-test-"));
+  const outside = await mkdtemp(path.join(os.tmpdir(), "nexus-outside-test-"));
+  try {
+    await writeFile(path.join(outside, ".gitignore"), "*.ts\n", "utf8");
+    await writeFile(path.join(outside, "visible.ts"), "export const secret = 'outside';", "utf8");
+    try {
+      await symlink(outside, path.join(root, "linked"), process.platform === "win32" ? "junction" : "dir");
+    } catch (error) {
+      if (process.platform === "win32") {
+        context.skip(`Symlink creation unavailable: ${error instanceof Error ? error.message : "unknown error"}`);
+        return;
+      }
+      throw error;
+    }
+    assert.equal(await scanProjectFile(root, "linked/visible.ts"), null);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+    await rm(outside, { recursive: true, force: true });
   }
 });

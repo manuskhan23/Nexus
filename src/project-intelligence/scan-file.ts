@@ -38,7 +38,25 @@ async function getRules(root: string, relativePath: string): Promise<IgnoreRule[
   return rules;
 }
 
-/** Returns null for deleted, ignored, secret, binary, or unsupported paths. */
+/** Reject symlinks in every component, matching the full scanner's no-symlink policy. */
+async function hasSafeRegularFilePath(root: string, relativePath: string): Promise<boolean> {
+  const segments = relativePath.split("/");
+  let current = root;
+  for (let index = 0; index < segments.length; index++) {
+    current = path.join(current, segments[index]);
+    try {
+      const info = await lstat(current);
+      if (info.isSymbolicLink()) return false;
+      if (index < segments.length - 1 && !info.isDirectory()) return false;
+      if (index === segments.length - 1 && !info.isFile()) return false;
+    } catch {
+      return false;
+    }
+  }
+  return true;
+}
+
+/** Returns null for deleted, ignored, secret, binary, unsupported, or unsafe paths. */
 export async function scanProjectFile(projectRoot: string, relativePath: string): Promise<IndexedFile | null> {
   const root = await realpath(projectRoot);
   const absolute = path.resolve(root, relativePath);
@@ -47,23 +65,26 @@ export async function scanProjectFile(projectRoot: string, relativePath: string)
   const normalized = relative.replaceAll(path.sep, "/");
   if (normalized.split("/").some((part) => DEFAULT_IGNORES.has(part)) || SECRET_NAME.test(normalized)) return null;
 
+  // Check path components before reading nested ignore files; a symlinked parent must not
+  // cause an incremental scan to read metadata from outside the registered project.
+  if (!await hasSafeRegularFilePath(root, normalized)) return null;
+  const resolved = await realpath(absolute);
+  const resolvedRelative = path.relative(root, resolved);
+  if (!resolvedRelative || resolvedRelative.startsWith("..") || path.isAbsolute(resolvedRelative)) return null;
+
   const rules = await getRules(root, normalized);
   if (isIgnoredPath(normalized, false, rules)) return null;
 
   try {
     const info = await lstat(absolute);
-    if (!info.isFile() || info.isSymbolicLink() || info.size > MAX_FILE_BYTES) return null;
-    // A symlinked parent directory can escape the registered project even when the final file is regular.
-    const resolved = await realpath(absolute);
-    const resolvedRelative = path.relative(root, resolved);
-    if (!resolvedRelative || resolvedRelative.startsWith("..") || path.isAbsolute(resolvedRelative)) return null;
+    if (!info.isFile() || info.size > MAX_FILE_BYTES) return null;
     const language = LANGUAGES[path.extname(absolute).toLowerCase()];
     if (!language) return null;
     const bytes = await readFile(resolved);
-    if (bytes.includes(0)) return null;
+    if (bytes.length > MAX_FILE_BYTES || bytes.includes(0)) return null;
     return {
       path: normalized,
-      size: info.size,
+      size: bytes.length,
       modifiedAt: info.mtime.toISOString(),
       sha256: createHash("sha256").update(bytes).digest("hex"),
       language
