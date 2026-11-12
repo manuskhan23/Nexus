@@ -1,12 +1,7 @@
 import { createHash } from "node:crypto";
 import { promises as fs } from "node:fs";
 import path from "node:path";
-import {
-  isIgnoredPath,
-  mayContainReincludedPath,
-  parseIgnoreRules,
-  type IgnoreRule
-} from "./ignore-rules.js";
+import { isIgnoredPath, mayContainReincludedPath, parseIgnoreRules, type IgnoreRule } from "./ignore-rules.js";
 
 export interface IndexedFile {
   path: string;
@@ -43,28 +38,44 @@ const ALLOWED = new Map<string, string>([
 const MAX_FILES = 10_000;
 const MAX_DIRECTORIES = 50_000;
 const MAX_FILE_BYTES = 1_000_000;
+const MAX_PACKAGE_BYTES = 256_000;
 const MAX_DEPTH = 24;
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function stringKeys(value: unknown): string[] {
+  return isRecord(value) ? Object.keys(value).sort() : [];
+}
+
 async function readPackage(root: string): Promise<ProjectScan["package"]> {
+  const file = path.join(root, "package.json");
   try {
-    const raw = await fs.readFile(path.join(root, "package.json"), "utf8");
-    const data: unknown = JSON.parse(raw);
-    if (!data || typeof data !== "object") return null;
-    const manifest = data as Record<string, unknown>;
-    const deps = {
-      ...(manifest.dependencies as Record<string, string> | undefined),
-      ...(manifest.devDependencies as Record<string, string> | undefined)
+    const info = await fs.lstat(file);
+    if (!info.isFile() || info.isSymbolicLink() || info.size > MAX_PACKAGE_BYTES) return null;
+    const bytes = await fs.readFile(file);
+    if (bytes.length > MAX_PACKAGE_BYTES || bytes.includes(0)) return null;
+    const data: unknown = JSON.parse(bytes.toString("utf8"));
+    if (!isRecord(data)) return null;
+    const dependencies = {
+      ...((isRecord(data.dependencies) ? data.dependencies : {})),
+      ...((isRecord(data.devDependencies) ? data.devDependencies : {})),
+      ...((isRecord(data.peerDependencies) ? data.peerDependencies : {}))
     };
+    const scripts = stringKeys(data.scripts);
     const frameworks = ["react", "next", "vue", "svelte", "express", "electron", "vite", "angular"]
-      .filter((name) => name in deps);
+      .filter((name) => Object.hasOwn(dependencies, name));
     return {
-      name: typeof manifest.name === "string" ? manifest.name : undefined,
-      packageManager: typeof manifest.packageManager === "string" ? manifest.packageManager : undefined,
-      scripts: Object.keys((manifest.scripts as object | undefined) ?? {}),
-      dependencies: Object.keys(deps).sort(),
+      ...(typeof data.name === "string" && data.name.length <= 214 ? { name: data.name } : {}),
+      ...(typeof data.packageManager === "string" && data.packageManager.length <= 120
+        ? { packageManager: data.packageManager } : {}),
+      scripts,
+      dependencies: Object.keys(dependencies).sort(),
       frameworks
     };
   } catch {
+    // Missing, malformed, symlinked, or unreadable manifests do not fail a project scan.
     return null;
   }
 }
@@ -80,6 +91,25 @@ async function rulesForDirectory(directory: string, relativeDirectory: string, i
 
 function containsDefaultIgnore(relativePath: string): boolean {
   return relativePath.split("/").some((segment) => DEFAULT_IGNORES.has(segment));
+}
+
+function isInsideRoot(root: string, target: string): boolean {
+  const relative = path.relative(root, target);
+  return relative !== "" && !relative.startsWith("..") && !path.isAbsolute(relative);
+}
+
+async function readIndexedFile(root: string, absolute: string): Promise<{ bytes: Buffer; modifiedAt: string } | null> {
+  try {
+    const info = await fs.lstat(absolute);
+    if (!info.isFile() || info.isSymbolicLink() || info.size > MAX_FILE_BYTES) return null;
+    const resolved = await fs.realpath(absolute);
+    if (!isInsideRoot(root, resolved)) return null;
+    const bytes = await fs.readFile(resolved);
+    if (bytes.length > MAX_FILE_BYTES || bytes.includes(0)) return null;
+    return { bytes, modifiedAt: info.mtime.toISOString() };
+  } catch {
+    return null;
+  }
 }
 
 /** Indexes bounded metadata only; never returns secret files, binary data, or file contents. */
@@ -117,15 +147,18 @@ export async function scanProject(inputPath: string): Promise<ProjectScan> {
       if (isIgnoredPath(relative, false, rules)) { skipped.ignored++; continue; }
       const language = ALLOWED.get(path.extname(entry.name).toLowerCase());
       if (!language) { skipped.binaryOrUnsupported++; continue; }
-      const stat = await fs.stat(absolute);
-      if (stat.size > MAX_FILE_BYTES) { skipped.oversized++; continue; }
-      const bytes = await fs.readFile(absolute);
-      if (bytes.includes(0)) { skipped.binaryOrUnsupported++; continue; }
+      const file = await readIndexedFile(root, absolute);
+      if (!file) {
+        const stat = await fs.lstat(absolute).catch(() => null);
+        if (stat?.size && stat.size > MAX_FILE_BYTES) skipped.oversized++;
+        else skipped.ignored++;
+        continue;
+      }
       files.push({
         path: relative,
-        size: stat.size,
-        modifiedAt: stat.mtime.toISOString(),
-        sha256: createHash("sha256").update(bytes).digest("hex"),
+        size: file.bytes.length,
+        modifiedAt: file.modifiedAt,
+        sha256: createHash("sha256").update(file.bytes).digest("hex"),
         language
       });
     }

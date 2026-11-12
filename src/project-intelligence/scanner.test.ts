@@ -77,3 +77,45 @@ test("incremental indexing refuses symlinks that escape the project", async (con
     await rm(outside, { recursive: true, force: true });
   }
 });
+
+test("package manifest analysis ignores malformed dependency and script shapes", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "nexus-package-test-"));
+  try {
+    await writeFile(path.join(root, "package.json"), JSON.stringify({
+      name: "safe-project",
+      dependencies: "not-an-object",
+      devDependencies: { react: "^19.0.0" },
+      scripts: ["not", "an", "object"]
+    }), "utf8");
+    await writeFile(path.join(root, "src.ts"), "export const app = true;", "utf8");
+    const report = await scanProject(root);
+    assert.equal(report.package?.name, "safe-project");
+    assert.deepEqual(report.package?.dependencies, ["react"]);
+    assert.deepEqual(report.package?.scripts, []);
+    assert.deepEqual(report.package?.frameworks, ["react"]);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("scanner does not follow a symlinked package manifest", async (context) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "nexus-manifest-link-test-"));
+  const outside = await mkdtemp(path.join(os.tmpdir(), "nexus-manifest-outside-"));
+  try {
+    await writeFile(path.join(outside, "package.json"), JSON.stringify({ name: "outside-secret-project", dependencies: { secret: "1" } }), "utf8");
+    try {
+      await symlink(path.join(outside, "package.json"), path.join(root, "package.json"), process.platform === "win32" ? "file" : undefined);
+    } catch (error) {
+      if (process.platform === "win32") {
+        context.skip(`Symlink creation unavailable: ${error instanceof Error ? error.message : "unknown error"}`);
+        return;
+      }
+      throw error;
+    }
+    const report = await scanProject(root);
+    assert.equal(report.package, null);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+    await rm(outside, { recursive: true, force: true });
+  }
+});
