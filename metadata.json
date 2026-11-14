@@ -1,0 +1,6 @@
+{
+  "name": "NEXUS",
+  "description": "Autonomous AI agent workspace with multi-provider Gemini and Groq routing, tool execution, and persistent task memory.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

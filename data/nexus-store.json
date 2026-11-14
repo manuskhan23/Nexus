@@ -1,0 +1,56 @@
+{
+  "users": [
+    {
+      "id": "f255c86b-d94b-4e0b-a813-c5d89d9b2f51",
+      "fullName": "Alex Mercer",
+      "email": "demo@nexus.ai",
+      "passwordHash": "223456d6e796bcdbb904626523fd1b30:84a9d60c27d1d3b674309b04827971ab1e25f9d69edaddcbc8c467e345b37ddd2c32ddadd58ea3db23d10e30aba63f37cf1a133dc07e33e2e7ad11b06857bf0b",
+      "isEmailVerified": true,
+      "preferences": {
+        "theme": "system",
+        "defaultProviderMode": "automatic",
+        "preferredProvider": "gemini",
+        "autoExecuteLowRisk": true,
+        "requireApprovalForModerate": false
+      },
+      "createdAt": "2026-11-13T17:45:44.085Z",
+      "updatedAt": "2026-11-13T17:45:44.085Z"
+    }
+  ],
+  "otpTokens": [],
+  "refreshSessions": [
+    {
+      "id": "ab2fd590-8fd9-4f9d-ba24-84c47949b71d",
+      "userId": "f255c86b-d94b-4e0b-a813-c5d89d9b2f51",
+      "tokenHash": "6661e0ec6834a9931e5c421b452c3cab7a331c527e433e661ab4c7d041be8561",
+      "userAgent": "curl/7.88.1",
+      "expiresAt": "2026-11-20T17:45:53.592Z"
+    }
+  ],
+  "conversations": [],
+  "messages": [],
+  "tasks": [],
+  "memories": [
+    {
+      "id": "d5a2e38f-b485-4eb2-8689-356a12a7f4a9",
+      "userId": "f255c86b-d94b-4e0b-a813-c5d89d9b2f51",
+      "key": "preferred_stack",
+      "value": "TypeScript, React, Tailwind CSS, and Node.js Express",
+      "category": "preference",
+      "source": "user",
+      "createdAt": "2026-11-13T17:45:44.085Z",
+      "updatedAt": "2026-11-13T17:45:44.085Z"
+    },
+    {
+      "id": "bd836b8d-86ec-4cf4-ac1e-8bef6201d704",
+      "userId": "f255c86b-d94b-4e0b-a813-c5d89d9b2f51",
+      "key": "response_style",
+      "value": "Concise engineering summaries with runnable code examples",
+      "category": "preference",
+      "source": "user",
+      "createdAt": "2026-11-13T17:45:44.085Z",
+      "updatedAt": "2026-11-13T17:45:44.085Z"
+    }
+  ],
+  "providerLogs": []
+}
